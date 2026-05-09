@@ -51,6 +51,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self.strip.featureToggleSuppressRequested.connect(self.toggle_suppression)
         self.strip.featureRenameCommitted.connect(self.rename_feature)
         self.strip.featureDeleteRequested.connect(self.delete_feature)
+        self.strip.featureMoved.connect(self._feature_moved)
 
         layout.addWidget(toolbar)
         layout.addWidget(self.strip, 1)
@@ -166,6 +167,11 @@ class TipTrackDock(QtWidgets.QDockWidget):
     def _set_selected_feature(self, feature) -> None:
         self._selected_feature = feature
         self.strip.set_selected_feature(feature)
+
+    def _feature_moved(self, feature, index: int) -> None:
+        _ = index
+        self._selected_feature = feature
+        self.refresh()
 
     def _show_error(self, title: str, exc: Exception) -> None:
         message = f"TipTrack: {title} failed: {exc}"

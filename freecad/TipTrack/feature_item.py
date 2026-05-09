@@ -12,6 +12,14 @@ from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets
 ITEM_WIDTH = 56
 ITEM_HEIGHT = 72
 LABEL_LIMIT = 12
+MIME_FEATURE = "application/x-tiptrack-feature"
+
+
+def _event_pos(event):
+    position = getattr(event, "position", None)
+    if position is not None:
+        return position().toPoint()
+    return event.pos()
 
 
 def _short_label(label: str, limit: int = LABEL_LIMIT) -> str:
@@ -92,6 +100,7 @@ class FeatureItem(QtWidgets.QToolButton):
         self._is_tip = is_tip
         self._is_selected = False
         self._editor = None
+        self._drag_start_pos = None
 
         label = str(getattr(feature, "Label", getattr(feature, "Name", "")))
         type_id = str(getattr(feature, "TypeId", "Unknown"))
@@ -107,6 +116,38 @@ class FeatureItem(QtWidgets.QToolButton):
         self.clicked.connect(self._emit_selected)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self._apply_style()
+
+    def mousePressEvent(self, event) -> None:
+        """Remember the initial press point for drag detection."""
+        if event.button() == QtCore.Qt.LeftButton:
+            self._drag_start_pos = _event_pos(event)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        """Start a feature drag once the cursor passes Qt's drag threshold."""
+        if not (event.buttons() & QtCore.Qt.LeftButton):
+            super().mouseMoveEvent(event)
+            return
+        if self._drag_start_pos is None:
+            super().mouseMoveEvent(event)
+            return
+
+        distance = (_event_pos(event) - self._drag_start_pos).manhattanLength()
+        if distance < QtWidgets.QApplication.startDragDistance():
+            super().mouseMoveEvent(event)
+            return
+
+        drag = QtGui.QDrag(self)
+        mime_data = QtCore.QMimeData()
+        mime_data.setData(
+            MIME_FEATURE, str(getattr(self.feature, "Name", "")).encode("utf-8")
+        )
+        drag.setMimeData(mime_data)
+        drag.setPixmap(self.grab())
+        drag.setHotSpot(self._drag_start_pos)
+
+        exec_drag = getattr(drag, "exec", None) or drag.exec_
+        exec_drag(QtCore.Qt.MoveAction)
 
     def mouseDoubleClickEvent(self, event) -> None:
         """Request FreeCAD's native edit task for this feature."""
