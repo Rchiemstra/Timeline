@@ -93,10 +93,15 @@ Or run the Docker command directly:
 docker run --rm -v "${PWD}:/work" -w /work --entrypoint /bin/bash lscr.io/linuxserver/freecad:1.0.2 -lc "rm -rf /work/artifacts/freecad_tiptrack_frame_*.png /work/artifacts/tiptrack_integration.FCStd /work/artifacts/tiptrack_integration_summary.json /work/artifacts/tiptrack_integration_failure.txt; TIPTRACK_REPO_ROOT=/work TIPTRACK_ARTIFACT_DIR=/work/artifacts timeout 120s xvfb-run -a /opt/freecad/usr/bin/freecad /work/tests/integration/freecad_tiptrack_gui_smoke.py"
 ```
 
+Recommended for reproducible runs (includes **ffmpeg**; writes MP4/GIF automatically):
+
+```powershell
+docker compose run --rm tiptrack-integration
+```
+
 Artifacts are written to `artifacts/`:
 
-- `freecad-tiptrack-integration.mp4`
-- `freecad-tiptrack-integration.gif`
+- `freecad-tiptrack-integration.mp4` / `.gif` — encoded from composite PNG frames (3D viewport stacked above the TipTrack dock); produced inside **Compose**, or by `run-freecad-integration.bat` when **ffmpeg** is on `PATH`
 - `tiptrack_integration.FCStd`
 - `tiptrack_integration_summary.json`
 
@@ -106,8 +111,6 @@ Full project notes live in [Documentation/README.md](Documentation/README.md).
 
 - The Docker GUI smoke test validates dock loading and timeline behavior, but a
   manual Addon Manager install test is still needed before publishing.
-- The Linux/Xvfb capture can show a blank 3D viewport even when the generated
-  `FCStd` model is valid.
 - Drag reorder depends on FreeCAD 1.0+ `PartDesign::Body.insertObject` behavior
   and may still surface FreeCAD recompute warnings for fragile model references.
 - Timeline folder metadata helpers exist, but folder UI grouping is not exposed

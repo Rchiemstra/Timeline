@@ -71,5 +71,9 @@
       <source>Timeline scrubber</source>
       <translation>Timeline scrubber</translation>
     </message>
+    <message>
+      <source>Not applied at the current rollback position (still on the timeline).</source>
+      <translation>Not applied at the current rollback position (still on the timeline).</translation>
+    </message>
   </context>
 </TS>

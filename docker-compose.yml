@@ -1,0 +1,19 @@
+# TipTrack FreeCAD GUI integration test (headless Xvfb inside Debian + FreeCAD 1.0).
+#
+# Usage from repo root:
+#   docker compose run --rm tiptrack-integration
+#
+# Artifacts under ./artifacts: PNG composites, FCStd, MP4/GIF (ffmpeg in image).
+
+services:
+  tiptrack-integration:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.integration
+    volumes:
+      - .:/work
+    environment:
+      TIPTRACK_REPO_ROOT: /work
+      TIPTRACK_ARTIFACT_DIR: /work/artifacts
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: llvmpipe

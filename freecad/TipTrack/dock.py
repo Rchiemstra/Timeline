@@ -108,18 +108,31 @@ class TipTrackDock(QtWidgets.QDockWidget):
         timeline_panel = QtWidgets.QWidget(container)
         timeline_layout = QtWidgets.QVBoxLayout(timeline_panel)
         timeline_layout.setContentsMargins(0, 0, 0, 0)
-        timeline_layout.setSpacing(2)
+        timeline_layout.setSpacing(0)
 
-        self._scrubber = QtWidgets.QSlider(QtCore.Qt.Horizontal, timeline_panel)
+        timeline_row = QtWidgets.QWidget(timeline_panel)
+        row_layout = QtWidgets.QHBoxLayout(timeline_row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+
+        self._scrubber = QtWidgets.QSlider(QtCore.Qt.Horizontal, timeline_row)
         self._scrubber.setRange(0, 0)
         self._scrubber.setSingleStep(1)
         self._scrubber.setPageStep(1)
         self._scrubber.setTickPosition(QtWidgets.QSlider.NoTicks)
+        self._scrubber.setMinimumWidth(160)
+        self._scrubber.setMaximumWidth(220)
         self._scrubber.setToolTip(translate("Timeline scrubber"))
         self._scrubber.valueChanged.connect(self._scrubber_changed)
 
-        timeline_layout.addWidget(self.strip, 1)
-        timeline_layout.addWidget(self._scrubber)
+        row_layout.addWidget(self.strip, 1)
+        row_layout.addWidget(
+            self._scrubber,
+            0,
+            QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
+        )
+
+        timeline_layout.addWidget(timeline_row, 1)
 
         layout.addWidget(toolbar)
         layout.addWidget(timeline_panel, 1)
@@ -499,6 +512,13 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._play_button.setEnabled(has_features and not at_last)
         if not has_features or at_last:
             self._stop_playback()
+
+        self._sync_strip_scrub_visual()
+
+    def _sync_strip_scrub_visual(self) -> None:
+        if self._body is None:
+            return
+        self.strip.apply_scrub_mute(self._scrubber.value())
 
 
 def _standard_pixmap(name: str):

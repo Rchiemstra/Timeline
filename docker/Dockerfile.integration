@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-FileNotice: Headless FreeCAD GUI container for TipTrack integration tests.
+
+FROM debian:trixie-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TIPTRACK_REPO_ROOT=/work \
+    TIPTRACK_ARTIFACT_DIR=/work/artifacts \
+    LIBGL_ALWAYS_SOFTWARE=1 \
+    GALLIUM_DRIVER=llvmpipe
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        dbus-x11 \
+        ffmpeg \
+        freecad \
+        openbox \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docker/integration-entrypoint.sh /usr/local/bin/integration-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/integration-entrypoint.sh \
+    && chmod +x /usr/local/bin/integration-entrypoint.sh
+
+WORKDIR /work
+
+ENTRYPOINT ["/usr/local/bin/integration-entrypoint.sh"]
