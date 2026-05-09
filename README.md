@@ -81,6 +81,14 @@ This test starts FreeCAD 1.0.2 under Xvfb, creates a PartDesign Body with
 features, loads the TipTrack dock, moves the timeline scrubber, verifies
 `Body.Tip` rollback behavior, saves screenshots, and writes a test model.
 
+On Windows, run the helper script:
+
+```bat
+run-freecad-integration.bat
+```
+
+Or run the Docker command directly:
+
 ```powershell
 docker run --rm -v "${PWD}:/work" -w /work --entrypoint /bin/bash lscr.io/linuxserver/freecad:1.0.2 -lc "rm -rf /work/artifacts/freecad_tiptrack_frame_*.png /work/artifacts/tiptrack_integration.FCStd /work/artifacts/tiptrack_integration_summary.json /work/artifacts/tiptrack_integration_failure.txt; TIPTRACK_REPO_ROOT=/work TIPTRACK_ARTIFACT_DIR=/work/artifacts timeout 120s xvfb-run -a /opt/freecad/usr/bin/freecad /work/tests/integration/freecad_tiptrack_gui_smoke.py"
 ```
