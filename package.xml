@@ -5,7 +5,7 @@
 
     <name>TipTrack</name>
     <description>Displays the active PartDesign Body feature history as a horizontal timeline dock.</description>
-    <version>0.0.1</version>
+    <version>0.1.0</version>
     <date>2026-05-09</date>
 
     <freecadmin>1.0</freecadmin>

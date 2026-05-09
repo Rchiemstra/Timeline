@@ -3,7 +3,7 @@
 
 [project]
 name = "tiptrack"
-version = "0.0.1"
+version = "0.1.0"
 description = "FreeCAD addon that displays a PartDesign Body feature history timeline."
 requires-python = ">=3.10"
 dependencies = []

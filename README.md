@@ -24,3 +24,16 @@ git clone https://github.com/Rchiemstra/Timeline.git TipTrack
 Once published, TipTrack should be installable through FreeCAD's Addon Manager.
 
 Full project notes live in [Documentation/README.md](Documentation/README.md).
+
+## Known Issues
+
+- The addon has been validated with Docker-based Python tests, but still needs a
+  live FreeCAD/Add-on Manager smoke test on `chain_link.FCStd`.
+- Drag reorder depends on FreeCAD 1.0+ `PartDesign::Body.insertObject` behavior
+  and may still surface FreeCAD recompute warnings for fragile model references.
+- Timeline folder metadata helpers exist, but folder UI grouping is not exposed
+  yet.
+
+## Release Notes
+
+See [CHANGELOG.md](CHANGELOG.md).

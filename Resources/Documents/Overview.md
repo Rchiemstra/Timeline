@@ -10,4 +10,7 @@ navigate without switching workbenches. Early versions focus on showing the
 Body's ordered feature list and keeping it synchronized with FreeCAD selection
 and document changes.
 
+Version 0.1.0 focuses on the dock, feature actions, dependency-aware reorder
+checks, multi-body switching, preferences, and keyboard navigation.
+
 Requires FreeCAD 1.0 or newer.
