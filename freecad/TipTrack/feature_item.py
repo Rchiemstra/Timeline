@@ -12,7 +12,7 @@ from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets
 
 ITEM_WIDTH = 56
 ITEM_HEIGHT = 72
-LABEL_LIMIT = 12
+LABEL_HORIZONTAL_PADDING = 8
 MIME_FEATURE = "application/x-tiptrack-feature"
 
 
@@ -23,24 +23,9 @@ def _event_pos(event):
     return event.pos()
 
 
-def _short_label(label: str, limit: int = LABEL_LIMIT) -> str:
-    if len(label) <= limit:
-        return label
-    return f"{label[: limit - 3]}..."
-
-
 def _fallback_icon() -> QtGui.QIcon:
     style = QtWidgets.QApplication.style()
     return style.standardIcon(QtWidgets.QStyle.SP_FileDialogDetailedView)
-
-
-def _transparent_color(color: QtGui.QColor) -> str:
-    color = QtGui.QColor(color)
-    color.setAlpha(35)
-    hex_argb = getattr(QtGui.QColor, "HexArgb", None)
-    if hex_argb is not None:
-        return color.name(hex_argb)
-    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha()})"
 
 
 def _icon_from_freecad(value: str) -> QtGui.QIcon | None:
@@ -120,6 +105,8 @@ class FeatureItem(QtWidgets.QToolButton):
         self._editor = None
         self._drag_start_pos = None
         self._item_size = item_size or preferences.DEFAULT_ITEM_SIZE
+        self._border_color = QtGui.QColor()
+        self._background_color = QtGui.QColor(0, 0, 0, 0)
         self._show_label = (
             preferences.DEFAULT_SHOW_LABELS if show_label is None else show_label
         )
@@ -127,9 +114,8 @@ class FeatureItem(QtWidgets.QToolButton):
         label = str(getattr(feature, "Label", getattr(feature, "Name", "")))
         type_id = str(getattr(feature, "TypeId", "Unknown"))
 
-        self._set_label(label)
         self.setIcon(icon_for(feature))
-        icon_size = max(22, min(42, self._item_size - 28))
+        icon_size = max(22, min(34, self._item_size - 28))
         self.setIconSize(QtCore.QSize(icon_size, icon_size))
         self.setToolTip(f"{label}\n{type_id}")
         item_height = ITEM_HEIGHT if self._show_label else self._item_size
@@ -142,7 +128,56 @@ class FeatureItem(QtWidgets.QToolButton):
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.clicked.connect(self._emit_selected)
         self.customContextMenuRequested.connect(self._show_context_menu)
+        self._set_label(label)
         self._apply_style()
+
+    def paintEvent(self, event) -> None:
+        """Paint icon and label into fixed regions to avoid text overlap."""
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.fillRect(self.rect(), self.palette().window().color())
+
+        rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        background = QtGui.QColor(self._background_color)
+        if self.underMouse() and background.alpha() == 0:
+            background = self.palette().mid().color()
+            background.setAlpha(35)
+        if background.alpha() > 0:
+            painter.setBrush(QtGui.QBrush(background))
+        else:
+            painter.setBrush(QtCore.Qt.NoBrush)
+        painter.setPen(QtGui.QPen(self._border_color, 1))
+        painter.drawRoundedRect(rect, 4, 4)
+
+        content_rect = self.rect().adjusted(4, 4, -4, -4)
+        icon_size = self.iconSize()
+        if self._show_label:
+            label_height = self.fontMetrics().height() + 2
+            label_rect = QtCore.QRect(
+                content_rect.left(),
+                content_rect.bottom() - label_height + 1,
+                content_rect.width(),
+                label_height,
+            )
+            icon_area = QtCore.QRect(
+                content_rect.left(),
+                content_rect.top(),
+                content_rect.width(),
+                max(1, content_rect.height() - label_height - 3),
+            )
+        else:
+            label_rect = QtCore.QRect()
+            icon_area = content_rect
+
+        icon_rect = QtCore.QRect(0, 0, icon_size.width(), icon_size.height())
+        icon_rect.moveCenter(icon_area.center())
+        self.icon().paint(painter, icon_rect, QtCore.Qt.AlignCenter)
+
+        if self._show_label:
+            painter.setPen(self.palette().buttonText().color())
+            painter.drawText(label_rect, QtCore.Qt.AlignCenter, self.text())
+
+        _ = event
 
     def mousePressEvent(self, event) -> None:
         """Remember the initial press point for drag detection."""
@@ -247,7 +282,14 @@ class FeatureItem(QtWidgets.QToolButton):
         self.renameCommitted.emit(self.feature, new_label)
 
     def _set_label(self, label: str) -> None:
-        self.setText(_short_label(label) if self._show_label else "")
+        if not self._show_label:
+            self.setText("")
+            return
+
+        max_width = max(12, self._item_size - LABEL_HORIZONTAL_PADDING)
+        self.setText(
+            self.fontMetrics().elidedText(label, QtCore.Qt.ElideRight, max_width)
+        )
 
     def _apply_style(self) -> None:
         palette = self.palette()
@@ -256,22 +298,17 @@ class FeatureItem(QtWidgets.QToolButton):
         selected = palette.link().color().name()
 
         border = neutral
-        background = "transparent"
+        background = QtGui.QColor(0, 0, 0, 0)
         if self._is_tip:
             border = highlight
-            background = _transparent_color(palette.highlight().color())
+            background = palette.highlight().color()
+            background.setAlpha(35)
         if self._is_selected:
             border = selected
-            background = _transparent_color(palette.link().color())
+            background = palette.link().color()
+            background.setAlpha(35)
 
-        self.setStyleSheet(
-            "QToolButton {"
-            f"border: 1px solid {border};"
-            "border-radius: 4px;"
-            f"background: {background};"
-            "padding: 2px;"
-            "}"
-            "QToolButton:hover {"
-            "background: rgba(128, 128, 128, 35);"
-            "}"
-        )
+        self._border_color = QtGui.QColor(border)
+        self._background_color = background
+        self.setStyleSheet("QToolButton { border: none; padding: 0; font-size: 10px; }")
+        self.update()
