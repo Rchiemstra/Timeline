@@ -53,8 +53,13 @@ def _install() -> None:
         action = dock.toggleViewAction()
         action.setText("TipTrack timeline")
         view_menu = _view_menu(main_window)
-        if view_menu is not None:
-            view_menu.addAction(action)
+        if view_menu is not None and hasattr(view_menu, "addAction"):
+            try:
+                view_menu.addAction(action)
+            except RuntimeError as exc:
+                App.Console.PrintWarning(
+                    f"TipTrack: failed to add View menu action: {exc}\n"
+                )
 
         dock.setVisible(get_visible_on_startup())
 
