@@ -24,6 +24,7 @@ def mock_freecad(monkeypatch):
     for module_name in (
         "freecad.TipTrack.body_resolver",
         "freecad.TipTrack.observer",
+        "freecad.TipTrack.tip_controller",
     ):
         sys.modules.pop(module_name, None)
 

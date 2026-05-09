@@ -9,6 +9,7 @@ import FreeCADGui as Gui
 from freecad.TipTrack.body_resolver import get_active_body
 from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets
 from freecad.TipTrack.strip import TimelineStrip
+from freecad.TipTrack.tip_controller import set_tip, toggle_suppression
 
 
 class TipTrackDock(QtWidgets.QDockWidget):
@@ -45,6 +46,11 @@ class TipTrackDock(QtWidgets.QDockWidget):
 
         self.strip = TimelineStrip(container)
         self.strip.featureSelected.connect(self._set_selected_feature)
+        self.strip.featureEditRequested.connect(self.edit_feature)
+        self.strip.featureSetTipRequested.connect(self.set_tip_to_feature)
+        self.strip.featureToggleSuppressRequested.connect(self.toggle_suppression)
+        self.strip.featureRenameCommitted.connect(self.rename_feature)
+        self.strip.featureDeleteRequested.connect(self.delete_feature)
 
         layout.addWidget(toolbar)
         layout.addWidget(self.strip, 1)
@@ -80,6 +86,67 @@ class TipTrackDock(QtWidgets.QDockWidget):
         """Synchronize strip highlighting from an external selection."""
         self._set_selected_feature(feature)
 
+    def edit_feature(self, feature) -> None:
+        """Open FreeCAD's native edit task panel for feature."""
+        if feature is None or getattr(feature, "Document", None) is None:
+            return
+
+        try:
+            Gui.ActiveDocument.setEdit(feature.Name)
+        except Exception as exc:
+            self._show_error("Edit feature", exc)
+
+    def set_tip_to_feature(self, feature) -> None:
+        """Set the current Body tip to feature."""
+        try:
+            set_tip(self._body, feature)
+            self.refresh()
+        except Exception as exc:
+            self._show_error("Set as tip", exc)
+
+    def toggle_suppression(self, feature) -> None:
+        """Toggle feature suppression when FreeCAD exposes that property."""
+        try:
+            toggle_suppression(feature)
+            self.refresh()
+        except Exception as exc:
+            self._show_error("Toggle suppress", exc)
+
+    def rename_feature(self, feature, new_label: str) -> None:
+        """Rename feature without recomputing geometry."""
+        if feature is None or getattr(feature, "Document", None) is None:
+            return
+
+        try:
+            feature.Label = new_label
+            self.refresh()
+        except Exception as exc:
+            self._show_error("Rename feature", exc)
+
+    def delete_feature(self, feature) -> None:
+        """Delete feature after user confirmation."""
+        if feature is None or getattr(feature, "Document", None) is None:
+            return
+
+        label = str(getattr(feature, "Label", getattr(feature, "Name", "feature")))
+        result = QtWidgets.QMessageBox.question(
+            self,
+            "Delete feature",
+            f"Delete {label}?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if result != QtWidgets.QMessageBox.Yes:
+            return
+
+        try:
+            document = getattr(feature, "Document", None) or App.ActiveDocument
+            document.removeObject(feature.Name)
+            document.recompute()
+            self.refresh()
+        except Exception as exc:
+            self._show_error("Delete feature", exc)
+
     def toggle_selected_visibility(self) -> None:
         """Run FreeCAD's visibility toggle command for the selected feature."""
         feature = self._selected_feature
@@ -99,3 +166,8 @@ class TipTrackDock(QtWidgets.QDockWidget):
     def _set_selected_feature(self, feature) -> None:
         self._selected_feature = feature
         self.strip.set_selected_feature(feature)
+
+    def _show_error(self, title: str, exc: Exception) -> None:
+        message = f"TipTrack: {title} failed: {exc}"
+        App.Console.PrintError(f"{message}\n")
+        QtWidgets.QMessageBox.critical(self, title, str(exc))

@@ -80,25 +80,38 @@ class FeatureItem(QtWidgets.QToolButton):
     """Compact button representing one feature in a Body history."""
 
     featureSelected = QtCore.Signal(object)
+    editRequested = QtCore.Signal(object)
+    setTipRequested = QtCore.Signal(object)
+    toggleSuppressRequested = QtCore.Signal(object)
+    renameCommitted = QtCore.Signal(object, str)
+    deleteRequested = QtCore.Signal(object)
 
     def __init__(self, feature, *, is_tip: bool = False, parent=None):
         super().__init__(parent)
         self.feature = feature
         self._is_tip = is_tip
         self._is_selected = False
+        self._editor = None
 
         label = str(getattr(feature, "Label", getattr(feature, "Name", "")))
         type_id = str(getattr(feature, "TypeId", "Unknown"))
 
-        self.setText(_short_label(label))
+        self._set_label(label)
         self.setIcon(icon_for(feature))
         self.setIconSize(QtCore.QSize(28, 28))
         self.setToolTip(f"{label}\n{type_id}")
         self.setFixedSize(ITEM_WIDTH, ITEM_HEIGHT)
         self.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.clicked.connect(self._emit_selected)
+        self.customContextMenuRequested.connect(self._show_context_menu)
         self._apply_style()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        """Request FreeCAD's native edit task for this feature."""
+        self.editRequested.emit(self.feature)
+        super().mouseDoubleClickEvent(event)
 
     def set_tip_active(self, active: bool) -> None:
         """Update whether this item represents the Body tip."""
@@ -113,6 +126,60 @@ class FeatureItem(QtWidgets.QToolButton):
     def _emit_selected(self, checked: bool = False) -> None:
         _ = checked
         self.featureSelected.emit(self.feature)
+
+    def _show_context_menu(self, position) -> None:
+        menu = QtWidgets.QMenu(self)
+        edit_action = menu.addAction("Edit")
+        set_tip_action = menu.addAction("Set as tip")
+        suppress_action = menu.addAction("Toggle suppress")
+        suppress_action.setEnabled(hasattr(self.feature, "Suppressed"))
+        rename_action = menu.addAction("Rename")
+        delete_action = menu.addAction("Delete")
+
+        exec_menu = getattr(menu, "exec", None) or menu.exec_
+        action = exec_menu(self.mapToGlobal(position))
+        if action is edit_action:
+            self.editRequested.emit(self.feature)
+        elif action is set_tip_action:
+            self.setTipRequested.emit(self.feature)
+        elif action is suppress_action:
+            self.toggleSuppressRequested.emit(self.feature)
+        elif action is rename_action:
+            self._start_rename()
+        elif action is delete_action:
+            self.deleteRequested.emit(self.feature)
+
+    def _start_rename(self) -> None:
+        if self._editor is not None:
+            self._editor.setFocus()
+            return
+
+        label = str(getattr(self.feature, "Label", getattr(self.feature, "Name", "")))
+        editor = QtWidgets.QLineEdit(label, self)
+        editor.setGeometry(3, self.height() - 26, self.width() - 6, 22)
+        editor.selectAll()
+        editor.setFocus(QtCore.Qt.PopupFocusReason)
+        editor.editingFinished.connect(self._commit_rename)
+        editor.show()
+        self._editor = editor
+
+    def _commit_rename(self) -> None:
+        editor = self._editor
+        if editor is None:
+            return
+
+        new_label = editor.text().strip()
+        editor.deleteLater()
+        self._editor = None
+
+        if not new_label:
+            return
+
+        self._set_label(new_label)
+        self.renameCommitted.emit(self.feature, new_label)
+
+    def _set_label(self, label: str) -> None:
+        self.setText(_short_label(label))
 
     def _apply_style(self) -> None:
         border = "#5b6772"

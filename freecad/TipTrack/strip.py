@@ -14,6 +14,11 @@ class TimelineStrip(QtWidgets.QWidget):
     """Scrollable horizontal list of features in a PartDesign Body."""
 
     featureSelected = QtCore.Signal(object)
+    featureEditRequested = QtCore.Signal(object)
+    featureSetTipRequested = QtCore.Signal(object)
+    featureToggleSuppressRequested = QtCore.Signal(object)
+    featureRenameCommitted = QtCore.Signal(object, str)
+    featureDeleteRequested = QtCore.Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,6 +68,13 @@ class TimelineStrip(QtWidgets.QWidget):
             name = getattr(feature, "Name", "")
             item = FeatureItem(feature, is_tip=feature is tip, parent=self._content)
             item.featureSelected.connect(self._select_feature)
+            item.editRequested.connect(self.featureEditRequested.emit)
+            item.setTipRequested.connect(self.featureSetTipRequested.emit)
+            item.toggleSuppressRequested.connect(
+                self.featureToggleSuppressRequested.emit
+            )
+            item.renameCommitted.connect(self.featureRenameCommitted.emit)
+            item.deleteRequested.connect(self.featureDeleteRequested.emit)
             self._items_by_name[name] = item
             self._layout.addWidget(item)
 
