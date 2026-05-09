@@ -21,6 +21,12 @@ class _DocumentObserver:
 @pytest.fixture
 def mock_freecad(monkeypatch):
     """Install minimal FreeCAD and FreeCADGui modules in sys.modules."""
+    for module_name in (
+        "freecad.TipTrack.body_resolver",
+        "freecad.TipTrack.observer",
+    ):
+        sys.modules.pop(module_name, None)
+
     app = SimpleNamespace(
         ActiveDocument=None,
         DocumentObserver=_DocumentObserver,
