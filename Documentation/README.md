@@ -1,12 +1,10 @@
 <!-- SPDX-License-Identifier: CC0-1.0 -->
-<!-- SPDX-FileNotice: Part of the Minimal addon. -->
+<!-- SPDX-FileNotice: Documentation entry point for TipTrack. -->
 
-# Documentation
+# TipTrack Documentation
 
 ## Usage
 
--   [How do I do X?][Usage-X]
+- [Install TipTrack][Usage-Install]
 
-
-
-[Usage-X]: ./Usage/Howto-X.md
+[Usage-Install]: ./Usage/Howto-Install.md

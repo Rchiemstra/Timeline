@@ -1,14 +1,19 @@
 # SPDX-License-Identifier: CC0-1.0
-# SPDX-FileNotice: Part of the Minimal addon.
+# SPDX-FileNotice: Development tooling for the TipTrack addon.
 
 [project]
-version = "0.0.0"
-name = "Addon"
-requires-python = ">=3.11"
+name = "tiptrack"
+version = "0.0.1"
+description = "FreeCAD addon that displays a PartDesign Body feature history timeline."
+requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
 dev = [
-    "freecad-stubs>=1.0.21",
-    "pyside6>=6.11.0",
+    "pytest>=8.0",
+    "ruff>=0.6",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"

@@ -1,24 +1,13 @@
 <!-- SPDX-License-Identifier: CC0-1.0 -->
-<!-- SPDX-FileNotice: Part of the Minimal addon. -->
+<!-- SPDX-FileNotice: Addon Manager overview for TipTrack. -->
 
-# Minimal
+# TipTrack
 
-Addon example that's easy to make your own.
+TipTrack adds a docked horizontal timeline for the active PartDesign Body.
 
-<img width="300" src="../Media/Header.webp" />
+The timeline is intended to make a model's feature history easier to scan and
+navigate without switching workbenches. Early versions focus on showing the
+Body's ordered feature list and keeping it synchronized with FreeCAD selection
+and document changes.
 
-
-## What
-
-This is the file configured in the `package.xml`  
-manifest to be shown in the addon manager  
-instead of the repository README.
-
-## Why
-
-Most of the information of the repository README  
-isn't relevant to the users of your addon, they are  
-for the most part 2 separate audiences.
-
-Both should be served adequately and not  
-overloaded with information they don't need.
+Requires FreeCAD 1.0 or newer.
