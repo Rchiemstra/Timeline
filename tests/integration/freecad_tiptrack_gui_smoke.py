@@ -144,17 +144,22 @@ def main() -> None:
     frames = []
     frames.append(screenshot(main_window, "freecad_tiptrack_frame_00_initial.png"))
 
-    dock.strip.select_feature(pad)
-    frames.append(screenshot(main_window, "freecad_tiptrack_frame_01_select_pad.png"))
-
-    dock.set_tip_to_feature(pad)
+    dock._scrubber.setValue(1)
+    QtWidgets.QApplication.processEvents()
     if body.Tip is not pad:
-        raise AssertionError("Set as tip did not update Body.Tip to Pad")
-    frames.append(screenshot(main_window, "freecad_tiptrack_frame_02_tip_pad.png"))
+        raise AssertionError("Scrubber did not update Body.Tip to Pad")
+    frames.append(screenshot(main_window, "freecad_tiptrack_frame_01_scrub_pad.png"))
 
-    dock.set_tip_to_feature(pad2)
+    dock._scrubber.setValue(0)
+    QtWidgets.QApplication.processEvents()
+    if body.Tip is not None:
+        raise AssertionError("Scrubber did not clear Body.Tip before first Pad")
+
+    dock._scrubber.setValue(3)
+    QtWidgets.QApplication.processEvents()
     if body.Tip is not pad2:
-        raise AssertionError("Set as tip did not update Body.Tip to Pad001")
+        raise AssertionError("Scrubber did not update Body.Tip to Pad001")
+    frames.append(screenshot(main_window, "freecad_tiptrack_frame_02_scrub_end.png"))
 
     dock.rename_feature(sketch, "BaseSketch")
     if sketch.Label != "BaseSketch":

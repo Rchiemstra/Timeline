@@ -68,8 +68,8 @@
       <translation>Last feature</translation>
     </message>
     <message>
-      <source>Timeline position</source>
-      <translation>Timeline position</translation>
+      <source>Timeline scrubber</source>
+      <translation>Timeline scrubber</translation>
     </message>
   </context>
 </TS>

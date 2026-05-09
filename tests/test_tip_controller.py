@@ -52,3 +52,35 @@ def test_toggle_suppression_rejects_unsupported_features(mock_freecad):
         assert "does not support suppression" in str(exc)
     else:
         raise AssertionError("Expected unsupported suppression to fail")
+
+
+def test_tip_for_scrub_index_uses_nearest_partdesign_feature(mock_freecad):
+    """Scrubbing to a sketch rolls back to the previous valid PartDesign tip."""
+    sketch = SimpleNamespace(Name="Sketch", TypeId="Sketcher::SketchObject")
+    pad = SimpleNamespace(Name="Pad", TypeId="PartDesign::Pad")
+    sketch2 = SimpleNamespace(Name="Sketch001", TypeId="Sketcher::SketchObject")
+    body = SimpleNamespace(Group=[sketch, pad, sketch2])
+
+    from freecad.TipTrack.tip_controller import tip_for_scrub_index
+
+    assert tip_for_scrub_index(body, 0) is None
+    assert tip_for_scrub_index(body, 1) is pad
+    assert tip_for_scrub_index(body, 2) is pad
+
+
+def test_scrub_tip_to_index_updates_tip_and_recomputes(mock_freecad):
+    """The scrubber helper can clear the tip before the first solid feature."""
+    document = _Document()
+    sketch = SimpleNamespace(Name="Sketch", TypeId="Sketcher::SketchObject")
+    pad = SimpleNamespace(Name="Pad", TypeId="PartDesign::Pad")
+    body = SimpleNamespace(Group=[sketch, pad], Tip=pad, Document=document)
+
+    from freecad.TipTrack.tip_controller import scrub_tip_to_index
+
+    assert scrub_tip_to_index(body, 0) is None
+    assert body.Tip is None
+    assert document.recompute_count == 1
+
+    assert scrub_tip_to_index(body, 1) is pad
+    assert body.Tip is pad
+    assert document.recompute_count == 2

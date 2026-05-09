@@ -10,7 +10,11 @@ from freecad.TipTrack.body_resolver import get_active_body, get_bodies
 from freecad.TipTrack.i18n import translate
 from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets
 from freecad.TipTrack.strip import TimelineStrip
-from freecad.TipTrack.tip_controller import set_tip, toggle_suppression
+from freecad.TipTrack.tip_controller import (
+    scrub_tip_to_index,
+    set_tip,
+    toggle_suppression,
+)
 
 
 class TipTrackDock(QtWidgets.QDockWidget):
@@ -51,7 +55,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._first_button = self._make_nav_button(
             "SP_MediaSkipBackward",
             translate("First feature"),
-            lambda: self.select_feature_at(0),
+            lambda: self.scrub_to_index(0),
         )
         self._previous_button = self._make_nav_button(
             "SP_MediaSeekBackward",
@@ -84,20 +88,11 @@ class TipTrackDock(QtWidgets.QDockWidget):
             nav_layout.addWidget(button)
         nav_layout.addStretch(1)
 
-        self._position_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal, toolbar)
-        self._position_slider.setRange(0, 0)
-        self._position_slider.setSingleStep(1)
-        self._position_slider.setPageStep(1)
-        self._position_slider.setTickPosition(QtWidgets.QSlider.NoTicks)
-        self._position_slider.setToolTip(translate("Timeline position"))
-        self._position_slider.valueChanged.connect(self._slider_changed)
-
         self._refresh_button = QtWidgets.QPushButton(translate("Refresh"), toolbar)
         self._refresh_button.clicked.connect(self.refresh)
 
         toolbar_layout.addWidget(self._body_selector)
         toolbar_layout.addWidget(nav_controls)
-        toolbar_layout.addWidget(self._position_slider)
         toolbar_layout.addWidget(self._refresh_button)
         toolbar_layout.addStretch(1)
 
@@ -110,8 +105,24 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self.strip.featureDeleteRequested.connect(self.delete_feature)
         self.strip.featureMoved.connect(self._feature_moved)
 
+        timeline_panel = QtWidgets.QWidget(container)
+        timeline_layout = QtWidgets.QVBoxLayout(timeline_panel)
+        timeline_layout.setContentsMargins(0, 0, 0, 0)
+        timeline_layout.setSpacing(2)
+
+        self._scrubber = QtWidgets.QSlider(QtCore.Qt.Horizontal, timeline_panel)
+        self._scrubber.setRange(0, 0)
+        self._scrubber.setSingleStep(1)
+        self._scrubber.setPageStep(1)
+        self._scrubber.setTickPosition(QtWidgets.QSlider.NoTicks)
+        self._scrubber.setToolTip(translate("Timeline scrubber"))
+        self._scrubber.valueChanged.connect(self._scrubber_changed)
+
+        timeline_layout.addWidget(self.strip, 1)
+        timeline_layout.addWidget(self._scrubber)
+
         layout.addWidget(toolbar)
-        layout.addWidget(self.strip, 1)
+        layout.addWidget(timeline_panel, 1)
         self.setWidget(container)
 
         shortcut_class = getattr(QtGui, "QShortcut", None) or QtWidgets.QShortcut
@@ -155,6 +166,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
 
         self._selected_feature = getattr(self._body, "Tip", None)
         self.strip.set_selected_feature(self._selected_feature)
+        self._sync_scrubber_to_tip()
         self._update_navigation_controls()
 
     def set_selected_feature(self, feature) -> None:
@@ -170,7 +182,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
         current_index = self._current_feature_index(features)
 
         next_index = max(0, min(current_index + step, len(features) - 1))
-        self.select_feature_at(next_index)
+        self.scrub_to_index(next_index)
 
     def select_feature_at(self, index: int) -> None:
         """Select the feature at index in the current strip."""
@@ -183,11 +195,32 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self.strip.select_feature(features[safe_index])
         self._update_navigation_controls()
 
+    def scrub_to_index(self, index: int) -> None:
+        """Move the timeline scrubber and roll the Body tip to index."""
+        features = self.strip.visible_features()
+        if self._body is None or not features:
+            self._update_navigation_controls()
+            return
+
+        safe_index = max(0, min(index, len(features) - 1))
+        feature = features[safe_index]
+
+        try:
+            scrub_tip_to_index(self._body, safe_index)
+            self._selected_feature = feature
+            self.strip.set_body(self._body)
+            self.strip.set_selected_feature(feature)
+            self.strip.select_feature(feature)
+            self._set_scrubber_value(safe_index)
+            self._update_navigation_controls()
+        except Exception as exc:
+            self._show_error("Timeline scrubber", exc)
+
     def select_last_feature(self) -> None:
         """Select the last feature in the current strip."""
         features = self.strip.visible_features()
         if features:
-            self.select_feature_at(len(features) - 1)
+            self.scrub_to_index(len(features) - 1)
 
     def set_selected_as_tip(self) -> None:
         """Set the selected feature as the Body tip."""
@@ -343,6 +376,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self.strip.set_body(body)
         self._selected_feature = getattr(body, "Tip", None)
         self.strip.set_selected_feature(self._selected_feature)
+        self._sync_scrubber_to_tip()
         self._update_navigation_controls()
 
     def _set_selector_body(self, body) -> None:
@@ -378,10 +412,10 @@ class TipTrackDock(QtWidgets.QDockWidget):
         button.clicked.connect(lambda checked=False: callback())
         return button
 
-    def _slider_changed(self, value: int) -> None:
+    def _scrubber_changed(self, value: int) -> None:
         if self._updating_navigation:
             return
-        self.select_feature_at(value)
+        self.scrub_to_index(value)
 
     def _toggle_playback(self) -> None:
         if self._play_button.isChecked():
@@ -398,12 +432,12 @@ class TipTrackDock(QtWidgets.QDockWidget):
             self._stop_playback()
             return
 
-        current_index = self._current_feature_index(features)
+        current_index = self._current_scrub_index(features)
         if current_index >= len(features) - 1:
             self._stop_playback()
             return
 
-        self.select_feature_at(current_index + 1)
+        self.scrub_to_index(current_index + 1)
 
     def _stop_playback(self) -> None:
         self._play_timer.stop()
@@ -420,17 +454,39 @@ class TipTrackDock(QtWidgets.QDockWidget):
             0,
         )
 
+    def _current_scrub_index(self, features: list | None = None) -> int:
+        features = features if features is not None else self.strip.visible_features()
+        if not features:
+            return 0
+        return max(0, min(self._scrubber.value(), len(features) - 1))
+
+    def _sync_scrubber_to_tip(self) -> None:
+        features = self.strip.visible_features()
+        tip = getattr(self._body, "Tip", None)
+        tip_index = next(
+            (index for index, feature in enumerate(features) if feature is tip),
+            0,
+        )
+        self._set_scrubber_value(tip_index)
+
+    def _set_scrubber_value(self, value: int) -> None:
+        self._updating_navigation = True
+        try:
+            self._scrubber.setValue(value)
+        finally:
+            self._updating_navigation = False
+
     def _update_navigation_controls(self) -> None:
         features = self.strip.visible_features()
         has_features = bool(features)
-        current_index = self._current_feature_index(features) if has_features else 0
+        current_index = self._current_scrub_index(features) if has_features else 0
         last_index = len(features) - 1
 
         self._updating_navigation = True
         try:
-            self._position_slider.setEnabled(has_features)
-            self._position_slider.setRange(0, max(0, last_index))
-            self._position_slider.setValue(current_index)
+            self._scrubber.setEnabled(has_features)
+            self._scrubber.setRange(0, max(0, last_index))
+            self._scrubber.setValue(current_index)
         finally:
             self._updating_navigation = False
 

@@ -27,6 +27,36 @@ def set_tip(body, feature) -> None:
     _recompute(body)
 
 
+def can_be_tip(feature) -> bool:
+    """Return whether feature is a safe Body.Tip target."""
+    type_id = str(getattr(feature, "TypeId", ""))
+    return type_id.startswith("PartDesign::") and type_id != "PartDesign::Body"
+
+
+def tip_for_scrub_index(body, index: int):
+    """Return the nearest safe tip target at or before Body.Group[index]."""
+    features = list(getattr(body, "Group", []) or [])
+    if not features:
+        return None
+
+    safe_index = max(0, min(index, len(features) - 1))
+    for feature in reversed(features[: safe_index + 1]):
+        if can_be_tip(feature):
+            return feature
+    return None
+
+
+def scrub_tip_to_index(body, index: int):
+    """Roll body back to index and return the feature used as Body.Tip."""
+    if body is None:
+        raise ValueError("Cannot scrub without an active Body.")
+
+    tip_target = tip_for_scrub_index(body, index)
+    body.Tip = tip_target
+    _recompute(body)
+    return tip_target
+
+
 def toggle_suppression(feature) -> bool:
     """Toggle feature.Suppressed and recompute, returning the new value."""
     if not hasattr(feature, "Suppressed"):
@@ -35,4 +65,3 @@ def toggle_suppression(feature) -> bool:
     feature.Suppressed = not bool(feature.Suppressed)
     _recompute(feature)
     return bool(feature.Suppressed)
-
