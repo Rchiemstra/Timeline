@@ -19,13 +19,19 @@ if not exist "%ARTIFACTS%" mkdir "%ARTIFACTS%"
 
 echo Cleaning old integration artifacts...
 del /q "%ARTIFACTS%\freecad_tiptrack_frame_*.png" 2>nul
+del /q "%ARTIFACTS%\freecad_tiptrack_reorder_frame_*.png" 2>nul
 del /q "%ARTIFACTS%\record_frame_*.png" 2>nul
 del /q "%ARTIFACTS%\freecad-tiptrack-integration.mp4" 2>nul
 del /q "%ARTIFACTS%\freecad-tiptrack-integration.gif" 2>nul
+del /q "%ARTIFACTS%\freecad-tiptrack-reorder.mp4" 2>nul
+del /q "%ARTIFACTS%\freecad-tiptrack-reorder.gif" 2>nul
 del /q "%ARTIFACTS%\tiptrack_integration.FCStd" 2>nul
 del /q "%ARTIFACTS%\tiptrack_integration.*.FCBak" 2>nul
 del /q "%ARTIFACTS%\tiptrack_integration_summary.json" 2>nul
 del /q "%ARTIFACTS%\tiptrack_integration_failure.txt" 2>nul
+del /q "%ARTIFACTS%\tiptrack_reorder.FCStd" 2>nul
+del /q "%ARTIFACTS%\tiptrack_reorder_summary.json" 2>nul
+del /q "%ARTIFACTS%\tiptrack_reorder_failure.txt" 2>nul
 
 echo Running FreeCAD Docker GUI smoke test...
 docker run --rm ^
@@ -52,12 +58,7 @@ if exist "%ARTIFACTS%\tiptrack_integration_summary.json" (
 )
 
 where ffmpeg >nul 2>nul
-if errorlevel 1 (
-    echo.
-    echo ffmpeg was not found on PATH; skipping MP4/GIF generation.
-    echo Screenshots and the FCStd model are available in artifacts\.
-    exit /b 0
-)
+if errorlevel 1 goto :skip_smoke_ffmpeg
 
 echo.
 echo Building recording artifacts with ffmpeg...
@@ -76,6 +77,53 @@ if errorlevel 1 exit /b 1
 
 del /q "%ARTIFACTS%\record_frame_*.png" 2>nul
 
+:skip_smoke_ffmpeg
+rem --- REORDER TEST ---
+echo.
+echo Running FreeCAD Docker reorder smoke test...
+docker run --rm ^
+  -v "%CD%:/work" ^
+  -w /work ^
+  --entrypoint /bin/bash ^
+  %IMAGE% ^
+  -lc "TIPTRACK_REPO_ROOT=/work TIPTRACK_ARTIFACT_DIR=/work/artifacts timeout 120s xvfb-run -a /opt/freecad/usr/bin/freecad /work/tests/integration/freecad_tiptrack_reorder_smoke.py"
+
+if errorlevel 1 (
+    echo.
+    echo ERROR: FreeCAD reorder integration test failed.
+    if exist "%ARTIFACTS%\tiptrack_reorder_failure.txt" (
+        echo Failure details:
+        type "%ARTIFACTS%\tiptrack_reorder_failure.txt"
+    )
+    exit /b 1
+)
+
+if exist "%ARTIFACTS%\tiptrack_reorder_summary.json" (
+    echo.
+    echo Reorder test summary:
+    type "%ARTIFACTS%\tiptrack_reorder_summary.json"
+)
+
+where ffmpeg >nul 2>nul
+if errorlevel 1 goto :done
+
+echo.
+echo Building reorder recording artifacts with ffmpeg...
+copy /y "%ARTIFACTS%\freecad_tiptrack_reorder_frame_00_initial.png" "%ARTIFACTS%\record_frame_00.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_reorder_frame_01_after_move.png" "%ARTIFACTS%\record_frame_01.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_reorder_frame_02_scrub_basepad.png" "%ARTIFACTS%\record_frame_02.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_reorder_frame_03_scrub_pillarpad.png" "%ARTIFACTS%\record_frame_03.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_reorder_frame_04_invalid_rejected.png" "%ARTIFACTS%\record_frame_04.png" >nul
+
+ffmpeg -y -framerate 1 -i "%ARTIFACTS%\record_frame_%%02d.png" -vf "fps=10,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p" "%ARTIFACTS%\freecad-tiptrack-reorder.mp4"
+if errorlevel 1 exit /b 1
+
+ffmpeg -y -framerate 1 -i "%ARTIFACTS%\record_frame_%%02d.png" -vf "fps=5,scale=960:-2:flags=lanczos" "%ARTIFACTS%\freecad-tiptrack-reorder.gif"
+if errorlevel 1 exit /b 1
+
+del /q "%ARTIFACTS%\record_frame_*.png" 2>nul
+
+:done
 echo.
 echo Done. Artifacts are in:
 echo %ARTIFACTS%
