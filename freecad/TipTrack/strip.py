@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # SPDX-FileNotice: Timeline strip widget for TipTrack.
 
-"""Read-only horizontal feature timeline for the active Body."""
+"""Scrollable horizontal timeline with thumbnail scrubber."""
 
 import FreeCAD as App
 import FreeCADGui as Gui
 
-from freecad.TipTrack import preferences
-from freecad.TipTrack.feature_item import FeatureItem, MIME_FEATURE
+from freecad.TipTrack.feature_item import MIME_FEATURE
 from freecad.TipTrack.i18n import translate
 from freecad.TipTrack.Qt.Gui import QtCore, QtWidgets
 from freecad.TipTrack.reorder import can_move, move_feature
+from freecad.TipTrack.timeline_scrubber import THUMB_W, TimelineScrubber
 
 
 class TimelineStrip(QtWidgets.QWidget):
@@ -27,8 +27,6 @@ class TimelineStrip(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._body = None
-        self._items_by_name: dict[str, FeatureItem] = {}
-        self._empty_label: QtWidgets.QLabel | None = None
         self._drop_indicator = QtWidgets.QFrame(self)
         self._drop_indicator.setObjectName("TipTrackDropIndicator")
         self._drop_indicator.setFixedWidth(2)
@@ -46,16 +44,17 @@ class TimelineStrip(QtWidgets.QWidget):
         self._scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         self._scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
-        self._content = QtWidgets.QWidget()
-        self._layout = QtWidgets.QHBoxLayout(self._content)
-        self._layout.setContentsMargins(6, 4, 6, 4)
-        self._layout.setSpacing(4)
-        self._layout.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        self._timeline_scrubber = TimelineScrubber(self._scroll_area)
+        self._scroll_area.setWidget(self._timeline_scrubber)
 
-        self._scroll_area.setWidget(self._content)
         root_layout.addWidget(self._scroll_area)
 
-        for target in (self, self._content, self._scroll_area.viewport()):
+        self._timeline_scrubber.featureChanged.connect(self._on_playhead_feature_changed)
+        self._timeline_scrubber.featureDoubleClicked.connect(
+            self._on_playhead_double_clicked
+        )
+
+        for target in (self, self._timeline_scrubber, self._scroll_area.viewport()):
             target.setAcceptDrops(True)
             target.installEventFilter(self)
 
@@ -67,49 +66,47 @@ class TimelineStrip(QtWidgets.QWidget):
     def set_body(self, body) -> None:
         """Rebuild the strip from body.Group."""
         self._body = body
-        self._clear_items()
 
         if body is None:
-            self._show_empty_state(
+            self._timeline_scrubber.clear()
+            self._timeline_scrubber.set_placeholder(
                 translate("No active Body - create one in Part Design.")
             )
             return
 
         features = list(getattr(body, "Group", []) or [])
         if not features:
-            self._show_empty_state(translate("Active Body has no features."))
+            self._timeline_scrubber.clear()
+            self._timeline_scrubber.set_placeholder(
+                translate("Active Body has no features.")
+            )
             return
 
-        tip = getattr(body, "Tip", None)
-        item_size = preferences.get_item_size()
-        show_labels = preferences.get_show_labels()
-        for feature in features:
-            name = getattr(feature, "Name", "")
-            item = FeatureItem(
-                feature,
-                is_tip=feature is tip,
-                item_size=item_size,
-                show_label=show_labels,
-                parent=self._content,
-            )
-            item.featureSelected.connect(self._select_feature)
-            item.editRequested.connect(self.featureEditRequested.emit)
-            item.setTipRequested.connect(self.featureSetTipRequested.emit)
-            item.toggleSuppressRequested.connect(
-                self.featureToggleSuppressRequested.emit
-            )
-            item.renameCommitted.connect(self.featureRenameCommitted.emit)
-            item.deleteRequested.connect(self.featureDeleteRequested.emit)
-            self._items_by_name[name] = item
-            self._layout.addWidget(item)
+        self._timeline_scrubber.set_placeholder(None)
+        self._timeline_scrubber.set_features(features)
 
-        self._layout.addStretch(1)
+        tip = getattr(body, "Tip", None)
+        if tip is not None:
+            try:
+                tip_i = features.index(tip)
+            except ValueError:
+                tip_i = 0
+        else:
+            tip_i = 0
+        self._timeline_scrubber.set_playhead_index(tip_i, emit_signal=False)
+
+    def apply_scrub_mute(self, scrub_index: int) -> None:
+        """Dim thumbnails after scrub_index so later history stays visible but subdued."""
+        self._timeline_scrubber.set_dim_after(scrub_index)
 
     def set_selected_feature(self, feature) -> None:
-        """Highlight feature as selected in the strip."""
+        """Move the playhead to the selected feature without emitting signals."""
+        feats = self.visible_features()
         selected_name = getattr(feature, "Name", None)
-        for name, item in self._items_by_name.items():
-            item.set_selected_active(name == selected_name)
+        for i, feat in enumerate(feats):
+            if getattr(feat, "Name", None) == selected_name:
+                self._timeline_scrubber.set_playhead_index(i, emit_signal=False)
+                break
 
     def select_feature(self, feature) -> None:
         """Select feature in FreeCAD and highlight it in the strip."""
@@ -119,25 +116,22 @@ class TimelineStrip(QtWidgets.QWidget):
         """Return the features currently represented in the strip."""
         return list(getattr(self._body, "Group", []) or [])
 
-    def wheelEvent(self, event) -> None:
-        """Pan the horizontal strip with the mouse wheel when enabled."""
-        if not preferences.get_scroll_wheel_pan():
-            super().wheelEvent(event)
-            return
-
-        angle_delta = event.angleDelta()
-        delta = angle_delta.y() or angle_delta.x()
-        if delta == 0:
-            super().wheelEvent(event)
-            return
-
-        bar = self._scroll_area.horizontalScrollBar()
-        bar.setValue(bar.value() - delta)
-        event.accept()
-
     def eventFilter(self, watched, event) -> bool:
-        """Handle drag/drop on child widgets that receive viewport events."""
+        """Drag/drop and optional horizontal wheel pan on the viewport."""
         event_type = event.type()
+        if (
+            watched is self._scroll_area.viewport()
+            and event_type == QtCore.QEvent.Wheel
+            and preferences_get_scroll_wheel_pan()
+        ):
+            angle_delta = event.angleDelta()
+            delta = angle_delta.y() or angle_delta.x()
+            if delta != 0:
+                bar = self._scroll_area.horizontalScrollBar()
+                bar.setValue(bar.value() - delta)
+                event.accept()
+                return True
+
         if event_type == QtCore.QEvent.DragEnter:
             self._drag_enter(event)
             return True
@@ -153,22 +147,15 @@ class TimelineStrip(QtWidgets.QWidget):
             return True
         return super().eventFilter(watched, event)
 
-    def _clear_items(self) -> None:
-        self._items_by_name.clear()
-        while self._layout.count():
-            layout_item = self._layout.takeAt(0)
-            widget = layout_item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        self._empty_label = None
+    def _on_playhead_feature_changed(self, index: int) -> None:
+        feats = self.visible_features()
+        if 0 <= index < len(feats):
+            self._select_feature(feats[index])
 
-    def _show_empty_state(self, text: str) -> None:
-        label = QtWidgets.QLabel(text, self._content)
-        label.setAlignment(QtCore.Qt.AlignCenter)
-        label.setStyleSheet("color: palette(mid); padding: 8px;")
-        self._empty_label = label
-        self._layout.addWidget(label)
-        self._layout.addStretch(1)
+    def _on_playhead_double_clicked(self, index: int) -> None:
+        feats = self.visible_features()
+        if 0 <= index < len(feats):
+            self.featureEditRequested.emit(feats[index])
 
     def _select_feature(self, feature) -> None:
         if not _feature_is_live(feature):
@@ -237,22 +224,14 @@ class TimelineStrip(QtWidgets.QWidget):
                 return feature
         return None
 
-    def _gap_index_for_event(self, event, watched) -> int:
-        pos = _event_pos(event)
-        if watched is not self._content:
-            pos = self._content.mapFrom(watched, pos)
-        return self._gap_index_from_x(pos.x())
+    def _map_pos_to_scrubber(self, watched, pos: QtCore.QPoint) -> QtCore.QPoint:
+        if watched is self._timeline_scrubber:
+            return pos
+        return self._timeline_scrubber.mapFrom(watched, pos)
 
-    def _gap_index_from_x(self, x_position: int) -> int:
-        features = list(getattr(self._body, "Group", []) or [])
-        items = [
-            self._items_by_name.get(getattr(feature, "Name", "")) for feature in features
-        ]
-        visible_items = [item for item in items if item is not None]
-        for index, item in enumerate(visible_items):
-            if x_position < item.x() + item.width() / 2:
-                return index
-        return len(visible_items)
+    def _gap_index_for_event(self, event, watched) -> int:
+        pos = self._map_pos_to_scrubber(watched, _event_pos(event))
+        return self._timeline_scrubber.gap_index_at_x(pos.x())
 
     def _final_index_for_gap(self, feature, gap_index: int) -> int:
         features = list(getattr(self._body, "Group", []) or [])
@@ -264,27 +243,30 @@ class TimelineStrip(QtWidgets.QWidget):
 
     def _show_drop_indicator(self, gap_index: int) -> None:
         features = list(getattr(self._body, "Group", []) or [])
-        item = None
+        scrub = self._timeline_scrubber
+        if not features:
+            return
+
         if 0 <= gap_index < len(features):
-            item = self._items_by_name.get(getattr(features[gap_index], "Name", ""))
-
-        if item is not None:
-            x_position = item.x() - 3
+            x_position = scrub.cell_left_x(gap_index) - 3
         else:
-            last_item = None
-            if features:
-                last_item = self._items_by_name.get(getattr(features[-1], "Name", ""))
-            x_position = (last_item.x() + last_item.width() + 3) if last_item else 4
+            x_position = scrub.cell_left_x(len(features) - 1) + THUMB_W + 3
 
-        self._drop_indicator.setParent(self._content)
+        self._drop_indicator.setParent(scrub)
         self._drop_indicator.setGeometry(
-            max(0, x_position), 6, 2, max(16, self._content.height() - 12)
+            max(0, x_position), 6, 2, max(16, scrub.height() - 12)
         )
         self._drop_indicator.raise_()
         self._drop_indicator.show()
 
     def _hide_drop_indicator(self) -> None:
         self._drop_indicator.hide()
+
+
+def preferences_get_scroll_wheel_pan() -> bool:
+    from freecad.TipTrack import preferences
+
+    return preferences.get_scroll_wheel_pan()
 
 
 def _feature_is_live(feature) -> bool:

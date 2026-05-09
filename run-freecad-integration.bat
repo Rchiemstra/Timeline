@@ -19,6 +19,9 @@ if not exist "%ARTIFACTS%" mkdir "%ARTIFACTS%"
 
 echo Cleaning old integration artifacts...
 del /q "%ARTIFACTS%\freecad_tiptrack_frame_*.png" 2>nul
+del /q "%ARTIFACTS%\record_frame_*.png" 2>nul
+del /q "%ARTIFACTS%\freecad-tiptrack-integration.mp4" 2>nul
+del /q "%ARTIFACTS%\freecad-tiptrack-integration.gif" 2>nul
 del /q "%ARTIFACTS%\tiptrack_integration.FCStd" 2>nul
 del /q "%ARTIFACTS%\tiptrack_integration.*.FCBak" 2>nul
 del /q "%ARTIFACTS%\tiptrack_integration_summary.json" 2>nul
@@ -61,10 +64,11 @@ echo Building recording artifacts with ffmpeg...
 copy /y "%ARTIFACTS%\freecad_tiptrack_frame_00_initial.png" "%ARTIFACTS%\record_frame_00.png" >nul
 copy /y "%ARTIFACTS%\freecad_tiptrack_frame_01_scrub_sketch.png" "%ARTIFACTS%\record_frame_01.png" >nul
 copy /y "%ARTIFACTS%\freecad_tiptrack_frame_02_scrub_pad.png" "%ARTIFACTS%\record_frame_02.png" >nul
-copy /y "%ARTIFACTS%\freecad_tiptrack_frame_03_scrub_end.png" "%ARTIFACTS%\record_frame_03.png" >nul
-copy /y "%ARTIFACTS%\freecad_tiptrack_frame_04_playback_done.png" "%ARTIFACTS%\record_frame_04.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_frame_03_two_pads_no_hole.png" "%ARTIFACTS%\record_frame_03.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_frame_04_full_with_hole.png" "%ARTIFACTS%\record_frame_04.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_frame_05_playback_done.png" "%ARTIFACTS%\record_frame_05.png" >nul
 
-ffmpeg -y -framerate 1 -i "%ARTIFACTS%\record_frame_%%02d.png" -vf "fps=10,format=yuv420p" "%ARTIFACTS%\freecad-tiptrack-integration.mp4"
+ffmpeg -y -framerate 1 -i "%ARTIFACTS%\record_frame_%%02d.png" -vf "fps=10,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p" "%ARTIFACTS%\freecad-tiptrack-integration.mp4"
 if errorlevel 1 exit /b 1
 
 ffmpeg -y -framerate 1 -i "%ARTIFACTS%\record_frame_%%02d.png" -vf "fps=5,scale=960:-2:flags=lanczos" "%ARTIFACTS%\freecad-tiptrack-integration.gif"

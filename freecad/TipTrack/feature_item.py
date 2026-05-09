@@ -8,6 +8,7 @@ from pathlib import Path
 import FreeCADGui as Gui
 
 from freecad.TipTrack import preferences
+from freecad.TipTrack.i18n import translate
 from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets
 
 ITEM_WIDTH = 56
@@ -102,6 +103,7 @@ class FeatureItem(QtWidgets.QToolButton):
         self.feature = feature
         self._is_tip = is_tip
         self._is_selected = False
+        self._is_future_inactive = False
         self._editor = None
         self._drag_start_pos = None
         self._item_size = item_size or preferences.DEFAULT_ITEM_SIZE
@@ -113,11 +115,12 @@ class FeatureItem(QtWidgets.QToolButton):
 
         label = str(getattr(feature, "Label", getattr(feature, "Name", "")))
         type_id = str(getattr(feature, "TypeId", "Unknown"))
+        self._label_text = label
+        self._type_id_text = type_id
 
         self.setIcon(icon_for(feature))
         icon_size = max(22, min(34, self._item_size - 28))
         self.setIconSize(QtCore.QSize(icon_size, icon_size))
-        self.setToolTip(f"{label}\n{type_id}")
         item_height = ITEM_HEIGHT if self._show_label else self._item_size
         self.setFixedSize(self._item_size, item_height)
         if self._show_label:
@@ -129,6 +132,7 @@ class FeatureItem(QtWidgets.QToolButton):
         self.clicked.connect(self._emit_selected)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self._set_label(label)
+        self._refresh_tooltip()
         self._apply_style()
 
     def paintEvent(self, event) -> None:
@@ -171,10 +175,19 @@ class FeatureItem(QtWidgets.QToolButton):
 
         icon_rect = QtCore.QRect(0, 0, icon_size.width(), icon_size.height())
         icon_rect.moveCenter(icon_area.center())
+        if self._is_future_inactive:
+            painter.setOpacity(0.42)
         self.icon().paint(painter, icon_rect, QtCore.Qt.AlignCenter)
+        painter.setOpacity(1.0)
 
         if self._show_label:
-            painter.setPen(self.palette().buttonText().color())
+            palette = self.palette()
+            pen_color = (
+                palette.mid().color()
+                if self._is_future_inactive
+                else palette.buttonText().color()
+            )
+            painter.setPen(pen_color)
             painter.drawText(label_rect, QtCore.Qt.AlignCenter, self.text())
 
         _ = event
@@ -225,6 +238,24 @@ class FeatureItem(QtWidgets.QToolButton):
         """Update whether this item represents the current selection."""
         self._is_selected = active
         self._apply_style()
+
+    def set_future_inactive(self, inactive: bool) -> None:
+        """Dim this card when it lies beyond the current scrub/rollback position."""
+        if self._is_future_inactive == inactive:
+            return
+        self._is_future_inactive = inactive
+        self._refresh_tooltip()
+        self._apply_style()
+
+    def _refresh_tooltip(self) -> None:
+        lines = [self._label_text, self._type_id_text]
+        if self._is_future_inactive:
+            lines.append(
+                translate(
+                    "Not applied at the current rollback position (still on the timeline)."
+                )
+            )
+        self.setToolTip("\n".join(lines))
 
     def _emit_selected(self, checked: bool = False) -> None:
         _ = checked
@@ -278,7 +309,9 @@ class FeatureItem(QtWidgets.QToolButton):
         if not new_label:
             return
 
+        self._label_text = new_label
         self._set_label(new_label)
+        self._refresh_tooltip()
         self.renameCommitted.emit(self.feature, new_label)
 
     def _set_label(self, label: str) -> None:
@@ -296,6 +329,18 @@ class FeatureItem(QtWidgets.QToolButton):
         neutral = palette.mid().color().name()
         highlight = palette.highlight().color().name()
         selected = palette.link().color().name()
+
+        if self._is_future_inactive:
+            background = QtGui.QColor(palette.mid().color())
+            background.setAlpha(48)
+            self._border_color = QtGui.QColor(neutral)
+            self._background_color = background
+            self.setStyleSheet(
+                "QToolButton { border: none; padding: 0; font-size: 10px; color: "
+                f"{neutral}; }}"
+            )
+            self.update()
+            return
 
         border = neutral
         background = QtGui.QColor(0, 0, 0, 0)
