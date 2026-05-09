@@ -47,5 +47,29 @@
       <source>Mouse wheel pans strip</source>
       <translation>Mouse wheel pans strip</translation>
     </message>
+    <message>
+      <source>First feature</source>
+      <translation>First feature</translation>
+    </message>
+    <message>
+      <source>Previous feature</source>
+      <translation>Previous feature</translation>
+    </message>
+    <message>
+      <source>Play timeline selection</source>
+      <translation>Play timeline selection</translation>
+    </message>
+    <message>
+      <source>Next feature</source>
+      <translation>Next feature</translation>
+    </message>
+    <message>
+      <source>Last feature</source>
+      <translation>Last feature</translation>
+    </message>
+    <message>
+      <source>Timeline position</source>
+      <translation>Timeline position</translation>
+    </message>
   </context>
 </TS>

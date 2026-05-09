@@ -23,6 +23,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._body_by_name = {}
         self._selected_body_by_document = {}
         self._refreshing_selector = False
+        self._updating_navigation = False
 
         self.setAllowedAreas(
             QtCore.Qt.BottomDockWidgetArea | QtCore.Qt.TopDockWidgetArea
@@ -42,10 +43,61 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._body_selector.setMinimumWidth(140)
         self._body_selector.currentIndexChanged.connect(self._body_selector_changed)
 
+        nav_controls = QtWidgets.QWidget(toolbar)
+        nav_layout = QtWidgets.QHBoxLayout(nav_controls)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.setSpacing(1)
+
+        self._first_button = self._make_nav_button(
+            "SP_MediaSkipBackward",
+            translate("First feature"),
+            lambda: self.select_feature_at(0),
+        )
+        self._previous_button = self._make_nav_button(
+            "SP_MediaSeekBackward",
+            translate("Previous feature"),
+            lambda: self.select_adjacent_feature(-1),
+        )
+        self._play_button = self._make_nav_button(
+            "SP_MediaPlay",
+            translate("Play timeline selection"),
+            self._toggle_playback,
+        )
+        self._play_button.setCheckable(True)
+        self._next_button = self._make_nav_button(
+            "SP_MediaSeekForward",
+            translate("Next feature"),
+            lambda: self.select_adjacent_feature(1),
+        )
+        self._last_button = self._make_nav_button(
+            "SP_MediaSkipForward",
+            translate("Last feature"),
+            self.select_last_feature,
+        )
+        for button in (
+            self._first_button,
+            self._previous_button,
+            self._play_button,
+            self._next_button,
+            self._last_button,
+        ):
+            nav_layout.addWidget(button)
+        nav_layout.addStretch(1)
+
+        self._position_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal, toolbar)
+        self._position_slider.setRange(0, 0)
+        self._position_slider.setSingleStep(1)
+        self._position_slider.setPageStep(1)
+        self._position_slider.setTickPosition(QtWidgets.QSlider.NoTicks)
+        self._position_slider.setToolTip(translate("Timeline position"))
+        self._position_slider.valueChanged.connect(self._slider_changed)
+
         self._refresh_button = QtWidgets.QPushButton(translate("Refresh"), toolbar)
         self._refresh_button.clicked.connect(self.refresh)
 
         toolbar_layout.addWidget(self._body_selector)
+        toolbar_layout.addWidget(nav_controls)
+        toolbar_layout.addWidget(self._position_slider)
         toolbar_layout.addWidget(self._refresh_button)
         toolbar_layout.addStretch(1)
 
@@ -80,6 +132,10 @@ class TipTrackDock(QtWidgets.QDockWidget):
         delete_shortcut = shortcut_class(QtGui.QKeySequence(QtCore.Qt.Key_Delete), self)
         delete_shortcut.activated.connect(self.delete_selected_feature)
 
+        self._play_timer = QtCore.QTimer(self)
+        self._play_timer.setInterval(600)
+        self._play_timer.timeout.connect(self._play_next_feature)
+
         self.refresh()
 
     @property
@@ -94,10 +150,12 @@ class TipTrackDock(QtWidgets.QDockWidget):
 
         if self._body is None:
             self._selected_feature = None
+            self._update_navigation_controls()
             return
 
         self._selected_feature = getattr(self._body, "Tip", None)
         self.strip.set_selected_feature(self._selected_feature)
+        self._update_navigation_controls()
 
     def set_selected_feature(self, feature) -> None:
         """Synchronize strip highlighting from an external selection."""
@@ -109,17 +167,27 @@ class TipTrackDock(QtWidgets.QDockWidget):
         if not features:
             return
 
-        current_index = next(
-            (
-                index
-                for index, feature in enumerate(features)
-                if feature is self._selected_feature
-            ),
-            0,
-        )
+        current_index = self._current_feature_index(features)
 
         next_index = max(0, min(current_index + step, len(features) - 1))
-        self.strip.select_feature(features[next_index])
+        self.select_feature_at(next_index)
+
+    def select_feature_at(self, index: int) -> None:
+        """Select the feature at index in the current strip."""
+        features = self.strip.visible_features()
+        if not features:
+            self._update_navigation_controls()
+            return
+
+        safe_index = max(0, min(index, len(features) - 1))
+        self.strip.select_feature(features[safe_index])
+        self._update_navigation_controls()
+
+    def select_last_feature(self) -> None:
+        """Select the last feature in the current strip."""
+        features = self.strip.visible_features()
+        if features:
+            self.select_feature_at(len(features) - 1)
 
     def set_selected_as_tip(self) -> None:
         """Set the selected feature as the Body tip."""
@@ -211,6 +279,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
     def _set_selected_feature(self, feature) -> None:
         self._selected_feature = feature
         self.strip.set_selected_feature(feature)
+        self._update_navigation_controls()
 
     def _feature_moved(self, feature, index: int) -> None:
         _ = index
@@ -274,6 +343,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self.strip.set_body(body)
         self._selected_feature = getattr(body, "Tip", None)
         self.strip.set_selected_feature(self._selected_feature)
+        self._update_navigation_controls()
 
     def _set_selector_body(self, body) -> None:
         self._set_selector_name(getattr(body, "Name", ""))
@@ -298,3 +368,82 @@ class TipTrackDock(QtWidgets.QDockWidget):
         message = f"TipTrack: {title} failed: {exc}"
         App.Console.PrintError(f"{message}\n")
         QtWidgets.QMessageBox.critical(self, title, str(exc))
+
+    def _make_nav_button(self, icon_name: str, tooltip: str, callback):
+        button = QtWidgets.QToolButton(self)
+        button.setAutoRaise(True)
+        button.setFixedSize(24, 22)
+        button.setIcon(self.style().standardIcon(_standard_pixmap(icon_name)))
+        button.setToolTip(tooltip)
+        button.clicked.connect(lambda checked=False: callback())
+        return button
+
+    def _slider_changed(self, value: int) -> None:
+        if self._updating_navigation:
+            return
+        self.select_feature_at(value)
+
+    def _toggle_playback(self) -> None:
+        if self._play_button.isChecked():
+            if not self.strip.visible_features():
+                self._play_button.setChecked(False)
+                return
+            self._play_timer.start()
+        else:
+            self._play_timer.stop()
+
+    def _play_next_feature(self) -> None:
+        features = self.strip.visible_features()
+        if not features:
+            self._stop_playback()
+            return
+
+        current_index = self._current_feature_index(features)
+        if current_index >= len(features) - 1:
+            self._stop_playback()
+            return
+
+        self.select_feature_at(current_index + 1)
+
+    def _stop_playback(self) -> None:
+        self._play_timer.stop()
+        self._play_button.setChecked(False)
+
+    def _current_feature_index(self, features: list | None = None) -> int:
+        features = features if features is not None else self.strip.visible_features()
+        return next(
+            (
+                index
+                for index, feature in enumerate(features)
+                if feature is self._selected_feature
+            ),
+            0,
+        )
+
+    def _update_navigation_controls(self) -> None:
+        features = self.strip.visible_features()
+        has_features = bool(features)
+        current_index = self._current_feature_index(features) if has_features else 0
+        last_index = len(features) - 1
+
+        self._updating_navigation = True
+        try:
+            self._position_slider.setEnabled(has_features)
+            self._position_slider.setRange(0, max(0, last_index))
+            self._position_slider.setValue(current_index)
+        finally:
+            self._updating_navigation = False
+
+        at_first = current_index <= 0
+        at_last = current_index >= last_index
+        self._first_button.setEnabled(has_features and not at_first)
+        self._previous_button.setEnabled(has_features and not at_first)
+        self._next_button.setEnabled(has_features and not at_last)
+        self._last_button.setEnabled(has_features and not at_last)
+        self._play_button.setEnabled(has_features and not at_last)
+        if not has_features or at_last:
+            self._stop_playback()
+
+
+def _standard_pixmap(name: str):
+    return getattr(QtWidgets.QStyle, name, QtWidgets.QStyle.SP_ArrowRight)
