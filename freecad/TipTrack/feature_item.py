@@ -7,6 +7,7 @@ from pathlib import Path
 
 import FreeCADGui as Gui
 
+from freecad.TipTrack import preferences
 from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets
 
 ITEM_WIDTH = 56
@@ -31,6 +32,15 @@ def _short_label(label: str, limit: int = LABEL_LIMIT) -> str:
 def _fallback_icon() -> QtGui.QIcon:
     style = QtWidgets.QApplication.style()
     return style.standardIcon(QtWidgets.QStyle.SP_FileDialogDetailedView)
+
+
+def _transparent_color(color: QtGui.QColor) -> str:
+    color = QtGui.QColor(color)
+    color.setAlpha(35)
+    hex_argb = getattr(QtGui.QColor, "HexArgb", None)
+    if hex_argb is not None:
+        return color.name(hex_argb)
+    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha()})"
 
 
 def _icon_from_freecad(value: str) -> QtGui.QIcon | None:
@@ -94,23 +104,40 @@ class FeatureItem(QtWidgets.QToolButton):
     renameCommitted = QtCore.Signal(object, str)
     deleteRequested = QtCore.Signal(object)
 
-    def __init__(self, feature, *, is_tip: bool = False, parent=None):
+    def __init__(
+        self,
+        feature,
+        *,
+        is_tip: bool = False,
+        item_size: int | None = None,
+        show_label: bool | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.feature = feature
         self._is_tip = is_tip
         self._is_selected = False
         self._editor = None
         self._drag_start_pos = None
+        self._item_size = item_size or preferences.DEFAULT_ITEM_SIZE
+        self._show_label = (
+            preferences.DEFAULT_SHOW_LABELS if show_label is None else show_label
+        )
 
         label = str(getattr(feature, "Label", getattr(feature, "Name", "")))
         type_id = str(getattr(feature, "TypeId", "Unknown"))
 
         self._set_label(label)
         self.setIcon(icon_for(feature))
-        self.setIconSize(QtCore.QSize(28, 28))
+        icon_size = max(22, min(42, self._item_size - 28))
+        self.setIconSize(QtCore.QSize(icon_size, icon_size))
         self.setToolTip(f"{label}\n{type_id}")
-        self.setFixedSize(ITEM_WIDTH, ITEM_HEIGHT)
-        self.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+        item_height = ITEM_HEIGHT if self._show_label else self._item_size
+        self.setFixedSize(self._item_size, item_height)
+        if self._show_label:
+            self.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+        else:
+            self.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.clicked.connect(self._emit_selected)
@@ -220,17 +247,22 @@ class FeatureItem(QtWidgets.QToolButton):
         self.renameCommitted.emit(self.feature, new_label)
 
     def _set_label(self, label: str) -> None:
-        self.setText(_short_label(label))
+        self.setText(_short_label(label) if self._show_label else "")
 
     def _apply_style(self) -> None:
-        border = "#5b6772"
+        palette = self.palette()
+        neutral = palette.mid().color().name()
+        highlight = palette.highlight().color().name()
+        selected = palette.link().color().name()
+
+        border = neutral
         background = "transparent"
         if self._is_tip:
-            border = "#28a6f0"
-            background = "rgba(40, 166, 240, 35)"
+            border = highlight
+            background = _transparent_color(palette.highlight().color())
         if self._is_selected:
-            border = "#f0a928"
-            background = "rgba(240, 169, 40, 35)"
+            border = selected
+            background = _transparent_color(palette.link().color())
 
         self.setStyleSheet(
             "QToolButton {"

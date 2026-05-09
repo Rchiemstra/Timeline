@@ -40,6 +40,13 @@ def _active_app_document():
     return getattr(gui_doc, "Document", None) or getattr(App, "ActiveDocument", None)
 
 
+def get_bodies(document=None) -> list:
+    """Return all PartDesign Bodies in document or the active document."""
+    document = document or _active_app_document()
+    objects = list(getattr(document, "Objects", []) or []) if document else []
+    return [obj for obj in objects if is_body(obj)]
+
+
 def _active_view_body(bodies):
     gui_doc = getattr(Gui, "ActiveDocument", None)
     active_view = getattr(gui_doc, "ActiveView", None)
@@ -64,7 +71,7 @@ def get_active_body():
     if not objects:
         return None
 
-    bodies = [obj for obj in objects if is_body(obj)]
+    bodies = get_bodies(document)
     if not bodies:
         return None
 
@@ -81,4 +88,3 @@ def get_active_body():
         return body
 
     return bodies[0]
-

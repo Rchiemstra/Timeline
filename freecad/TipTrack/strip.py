@@ -6,7 +6,9 @@
 import FreeCAD as App
 import FreeCADGui as Gui
 
+from freecad.TipTrack import preferences
 from freecad.TipTrack.feature_item import FeatureItem, MIME_FEATURE
+from freecad.TipTrack.i18n import translate
 from freecad.TipTrack.Qt.Gui import QtCore, QtWidgets
 from freecad.TipTrack.reorder import can_move, move_feature
 
@@ -68,18 +70,28 @@ class TimelineStrip(QtWidgets.QWidget):
         self._clear_items()
 
         if body is None:
-            self._show_empty_state("No active Body - create one in Part Design.")
+            self._show_empty_state(
+                translate("No active Body - create one in Part Design.")
+            )
             return
 
         features = list(getattr(body, "Group", []) or [])
         if not features:
-            self._show_empty_state("Active Body has no features.")
+            self._show_empty_state(translate("Active Body has no features."))
             return
 
         tip = getattr(body, "Tip", None)
+        item_size = preferences.get_item_size()
+        show_labels = preferences.get_show_labels()
         for feature in features:
             name = getattr(feature, "Name", "")
-            item = FeatureItem(feature, is_tip=feature is tip, parent=self._content)
+            item = FeatureItem(
+                feature,
+                is_tip=feature is tip,
+                item_size=item_size,
+                show_label=show_labels,
+                parent=self._content,
+            )
             item.featureSelected.connect(self._select_feature)
             item.editRequested.connect(self.featureEditRequested.emit)
             item.setTipRequested.connect(self.featureSetTipRequested.emit)
@@ -98,6 +110,30 @@ class TimelineStrip(QtWidgets.QWidget):
         selected_name = getattr(feature, "Name", None)
         for name, item in self._items_by_name.items():
             item.set_selected_active(name == selected_name)
+
+    def select_feature(self, feature) -> None:
+        """Select feature in FreeCAD and highlight it in the strip."""
+        self._select_feature(feature)
+
+    def visible_features(self) -> list:
+        """Return the features currently represented in the strip."""
+        return list(getattr(self._body, "Group", []) or [])
+
+    def wheelEvent(self, event) -> None:
+        """Pan the horizontal strip with the mouse wheel when enabled."""
+        if not preferences.get_scroll_wheel_pan():
+            super().wheelEvent(event)
+            return
+
+        angle_delta = event.angleDelta()
+        delta = angle_delta.y() or angle_delta.x()
+        if delta == 0:
+            super().wheelEvent(event)
+            return
+
+        bar = self._scroll_area.horizontalScrollBar()
+        bar.setValue(bar.value() - delta)
+        event.accept()
 
     def eventFilter(self, watched, event) -> bool:
         """Handle drag/drop on child widgets that receive viewport events."""

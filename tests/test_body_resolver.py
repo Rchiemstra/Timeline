@@ -64,6 +64,17 @@ def test_first_body_is_last_fallback(mock_freecad):
     assert get_active_body() is first
 
 
+def test_get_bodies_lists_partdesign_bodies(mock_freecad):
+    """Only PartDesign Bodies are returned from a document."""
+    body = _body("Body")
+    sketch = _obj("Sketch")
+    document = SimpleNamespace(Objects=[sketch, body])
+
+    from freecad.TipTrack.body_resolver import get_bodies
+
+    assert get_bodies(document) == [body]
+
+
 def test_no_gui_document_returns_none(mock_freecad):
     """No active GUI document means there is no active Body."""
     from freecad.TipTrack.body_resolver import get_active_body

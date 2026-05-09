@@ -9,9 +9,11 @@ import FreeCADGui as Gui
 from freecad.TipTrack.Qt.Gui import QtCore
 from freecad.TipTrack.dock import TipTrackDock
 from freecad.TipTrack.observer import TipTrackObserver
+from freecad.TipTrack.preferences import TipTrackPreferences, get_visible_on_startup
 
 _DOCK_OBJECT_NAME = "TipTrackTimelineDock"
 _observer: TipTrackObserver | None = None
+_preferences_installed = False
 
 
 def _view_menu(main_window):
@@ -27,11 +29,20 @@ def _view_menu(main_window):
 
 def _install() -> None:
     """Install the timeline dock and document/selection observers."""
-    global _observer
+    global _observer, _preferences_installed
 
     main_window = Gui.getMainWindow()
     if main_window is None:
         return
+
+    if not _preferences_installed:
+        try:
+            Gui.addPreferencePage(TipTrackPreferences, "TipTrack")
+            _preferences_installed = True
+        except Exception as exc:
+            App.Console.PrintWarning(
+                f"TipTrack: failed to install preferences page: {exc}\n"
+            )
 
     dock = main_window.findChild(TipTrackDock, _DOCK_OBJECT_NAME)
     if dock is None:
@@ -44,6 +55,8 @@ def _install() -> None:
         view_menu = _view_menu(main_window)
         if view_menu is not None:
             view_menu.addAction(action)
+
+        dock.setVisible(get_visible_on_startup())
 
     if _observer is None:
         _observer = TipTrackObserver(dock)
