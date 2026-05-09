@@ -4,11 +4,28 @@
 # TipTrack
 
 TipTrack is a FreeCAD addon that shows the active `PartDesign::Body` feature
-history as a horizontal docked timeline. The goal is a compact strip where users
-can inspect the feature sequence, select items, set the Body tip, and eventually
-reorder features within dependency constraints.
+history as a horizontal docked timeline. Click or drag the playhead to roll the
+model back and forward through its history, double-click a card to edit, and
+drag cards to reorder features within their dependency constraints.
 
-![TipTrack timeline placeholder](Resources/Media/Header.webp)
+![TipTrack scrubber demo](Resources/Media/demo-scrubber.gif)
+
+## Features
+
+### Timeline scrubber
+
+Scrub through the full feature history with a click or keyboard arrows. The
+triangular playhead sits at the right edge of the active card, and the dock
+slider mirrors the position. Thumbnails after the playhead are dimmed to show
+suppressed history.
+
+### Drag-to-reorder
+
+Drag a feature card left or right to reorder it. TipTrack checks dependency
+constraints before accepting the drop — features that would break a sketch-pad
+link are rejected with a tooltip explaining why.
+
+![TipTrack reorder demo](Resources/Media/demo-reorder.gif)
 
 ## Install
 
@@ -75,35 +92,36 @@ ruff check freecad tests"
 Expected result: all pytest tests pass, `package.xml parsed`, and Ruff reports
 `All checks passed!`.
 
-### FreeCAD GUI smoke test in Docker
+### FreeCAD GUI integration tests in Docker
 
-This test starts FreeCAD 1.0.2 under Xvfb, creates a PartDesign Body with
-features, loads the TipTrack dock, moves the timeline scrubber, verifies
-`Body.Tip` rollback behavior, saves screenshots, and writes a test model.
+Two integration tests run FreeCAD 1.0.2 under Xvfb, build a PartDesign model,
+exercise the TipTrack dock, and write screenshots + a summary JSON to
+`artifacts/`.
 
-On Windows, run the helper script:
+| Test | Script | What it covers |
+|---|---|---|
+| Scrubber smoke | `freecad_tiptrack_gui_smoke.py` | Playhead rollback, volume checks, 6-frame screenshots |
+| Reorder smoke | `freecad_tiptrack_reorder_smoke.py` | Valid reorder, 3 rejected moves, scrub after reorder |
+
+On Windows, run both tests with the helper script:
 
 ```bat
 run-freecad-integration.bat
 ```
 
-Or run the Docker command directly:
+When **ffmpeg** is on `PATH`, the script also encodes MP4 and GIF recordings
+from the frame screenshots automatically.
 
-```powershell
-docker run --rm -v "${PWD}:/work" -w /work --entrypoint /bin/bash lscr.io/linuxserver/freecad:1.0.2 -lc "rm -rf /work/artifacts/freecad_tiptrack_frame_*.png /work/artifacts/tiptrack_integration.FCStd /work/artifacts/tiptrack_integration_summary.json /work/artifacts/tiptrack_integration_failure.txt; TIPTRACK_REPO_ROOT=/work TIPTRACK_ARTIFACT_DIR=/work/artifacts timeout 120s xvfb-run -a /opt/freecad/usr/bin/freecad /work/tests/integration/freecad_tiptrack_gui_smoke.py"
-```
+Artifacts written to `artifacts/`:
 
-Recommended for reproducible runs (includes **ffmpeg**; writes MP4/GIF automatically):
-
-```powershell
-docker compose run --rm tiptrack-integration
-```
-
-Artifacts are written to `artifacts/`:
-
-- `freecad-tiptrack-integration.mp4` / `.gif` — encoded from composite PNG frames (3D viewport stacked above the TipTrack dock); produced inside **Compose**, or by `run-freecad-integration.bat` when **ffmpeg** is on `PATH`
-- `tiptrack_integration.FCStd`
-- `tiptrack_integration_summary.json`
+| File | Description |
+|---|---|
+| `freecad-tiptrack-integration.gif` / `.mp4` | Scrubber test recording |
+| `freecad-tiptrack-reorder.gif` / `.mp4` | Reorder test recording |
+| `tiptrack_integration.FCStd` | Saved model from scrubber test |
+| `tiptrack_reorder.FCStd` | Saved model from reorder test |
+| `tiptrack_integration_summary.json` | Volumes, frame paths |
+| `tiptrack_reorder_summary.json` | Group order, volumes, frame paths |
 
 Full project notes live in [Documentation/README.md](Documentation/README.md).
 
