@@ -6,7 +6,13 @@
 import FreeCAD as App
 import FreeCADGui as Gui
 
-from freecad.TipTrack.body_resolver import get_active_body, get_bodies
+from freecad.TipTrack.body_resolver import (
+    get_active_body,
+    get_bodies,
+    is_live_object,
+    safe_getattr,
+    safe_object_name,
+)
 from freecad.TipTrack.i18n import translate
 from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets
 from freecad.TipTrack.strip import TimelineStrip
@@ -28,6 +34,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._selected_body_by_document = {}
         self._refreshing_selector = False
         self._updating_navigation = False
+        self._refresh_depth = 0
 
         self.setAllowedAreas(
             QtCore.Qt.BottomDockWidgetArea | QtCore.Qt.TopDockWidgetArea
@@ -165,22 +172,32 @@ class TipTrackDock(QtWidgets.QDockWidget):
     @property
     def body(self):
         """Return the Body currently displayed by the dock."""
+        if self._body is not None and not is_live_object(self._body):
+            return None
         return self._body
 
     def refresh(self) -> None:
         """Refresh the displayed Body and feature strip."""
-        self._body = self._resolve_selected_body()
-        self.strip.set_body(self._body)
-
-        if self._body is None:
-            self._selected_feature = None
-            self._update_navigation_controls()
+        if self._refresh_depth:
             return
+        self._refresh_depth += 1
+        try:
+            if self._body is not None and not is_live_object(self._body):
+                self._body = None
+            self._body = self._resolve_selected_body()
+            self.strip.set_body(self._body)
 
-        self._selected_feature = getattr(self._body, "Tip", None)
-        self.strip.set_selected_feature(self._selected_feature)
-        self._sync_scrubber_to_tip()
-        self._update_navigation_controls()
+            if self._body is None:
+                self._selected_feature = None
+                self._update_navigation_controls()
+                return
+
+            self._selected_feature = safe_getattr(self._body, "Tip", None)
+            self.strip.set_selected_feature(self._selected_feature)
+            self._sync_scrubber_to_tip()
+            self._update_navigation_controls()
+        finally:
+            self._refresh_depth -= 1
 
     def set_selected_feature(self, feature) -> None:
         """Synchronize strip highlighting from an external selection."""
@@ -355,8 +372,12 @@ class TipTrackDock(QtWidgets.QDockWidget):
         return body
 
     def _rebuild_body_selector(self, bodies: list) -> None:
-        current_name = getattr(self._body, "Name", None)
-        self._body_by_name = {getattr(body, "Name", ""): body for body in bodies}
+        current_name = safe_object_name(self._body)
+        if self._body is not None and current_name is None:
+            self._body = None
+        self._body_by_name = {
+            safe_object_name(body) or "": body for body in bodies
+        }
 
         self._refreshing_selector = True
         try:
@@ -368,8 +389,8 @@ class TipTrackDock(QtWidgets.QDockWidget):
 
             self._body_selector.setEnabled(True)
             for body in bodies:
-                label = getattr(body, "Label", getattr(body, "Name", "Body"))
-                name = getattr(body, "Name", "")
+                name = safe_object_name(body) or ""
+                label = safe_getattr(body, "Label", None) or name or "Body"
                 self._body_selector.addItem(str(label), name)
 
             if current_name in self._body_by_name:
@@ -387,13 +408,13 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._remember_body(body)
         self._body = body
         self.strip.set_body(body)
-        self._selected_feature = getattr(body, "Tip", None)
+        self._selected_feature = safe_getattr(body, "Tip", None)
         self.strip.set_selected_feature(self._selected_feature)
         self._sync_scrubber_to_tip()
         self._update_navigation_controls()
 
     def _set_selector_body(self, body) -> None:
-        self._set_selector_name(getattr(body, "Name", ""))
+        self._set_selector_name(safe_object_name(body) or "")
 
     def _set_selector_name(self, body_name: str) -> None:
         index = self._body_selector.findData(body_name)
@@ -401,14 +422,14 @@ class TipTrackDock(QtWidgets.QDockWidget):
             self._body_selector.setCurrentIndex(index)
 
     def _remember_body(self, body) -> None:
-        self._selected_body_by_document[self._document_key()] = getattr(
-            body, "Name", ""
+        self._selected_body_by_document[self._document_key()] = (
+            safe_object_name(body) or ""
         )
 
     def _document_key(self) -> str:
-        document = getattr(self._body, "Document", None) or getattr(
-            App, "ActiveDocument", None
-        )
+        document = safe_getattr(self._body, "Document", None)
+        if document is None:
+            document = getattr(App, "ActiveDocument", None)
         return str(getattr(document, "Name", ""))
 
     def _show_error(self, title: str, exc: Exception) -> None:
@@ -475,7 +496,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
 
     def _sync_scrubber_to_tip(self) -> None:
         features = self.strip.visible_features()
-        tip = getattr(self._body, "Tip", None)
+        tip = safe_getattr(self._body, "Tip", None)
         tip_index = next(
             (index for index, feature in enumerate(features) if feature is tip),
             0,

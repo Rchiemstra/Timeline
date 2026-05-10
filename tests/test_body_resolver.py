@@ -80,3 +80,55 @@ def test_no_gui_document_returns_none(mock_freecad):
     from freecad.TipTrack.body_resolver import get_active_body
 
     assert get_active_body() is None
+
+
+class _DeletedFreecadProxy:
+    """Mimics FreeCAD when the underlying document object was removed."""
+
+    def __getattribute__(self, name):
+        raise ReferenceError("Cannot access attribute 'Name' of deleted object")
+
+
+def test_is_live_object_accepts_normal_objects(mock_freecad):
+    from freecad.TipTrack.body_resolver import is_live_object
+
+    assert is_live_object(_body("Body")) is True
+
+
+def test_is_live_object_rejects_none(mock_freecad):
+    from freecad.TipTrack.body_resolver import is_live_object
+
+    assert is_live_object(None) is False
+
+
+def test_is_live_object_rejects_deleted_proxy(mock_freecad):
+    """Stale Body references raise ReferenceError on attribute access (dock refresh)."""
+    from freecad.TipTrack.body_resolver import is_live_object
+
+    assert is_live_object(_DeletedFreecadProxy()) is False
+
+
+def test_safe_object_name_returns_none_for_deleted_proxy(mock_freecad):
+    from freecad.TipTrack.body_resolver import safe_object_name
+
+    assert safe_object_name(_DeletedFreecadProxy()) is None
+
+
+def test_safe_object_name_unlike_getattr_handles_deleted_proxy(mock_freecad):
+    """Plain getattr(..., 'Name', None) still raises ReferenceError on deleted proxies."""
+    dead = _DeletedFreecadProxy()
+    raised = False
+    try:
+        getattr(dead, "Name", None)
+    except ReferenceError:
+        raised = True
+    assert raised
+    from freecad.TipTrack.body_resolver import safe_object_name
+
+    assert safe_object_name(dead) is None
+
+
+def test_safe_getattr_returns_default_for_deleted_proxy(mock_freecad):
+    from freecad.TipTrack.body_resolver import safe_getattr
+
+    assert safe_getattr(_DeletedFreecadProxy(), "Tip", None) is None

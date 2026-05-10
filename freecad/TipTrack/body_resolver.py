@@ -11,6 +11,36 @@ import FreeCADGui as Gui
 BODY_TYPE_ID = "PartDesign::Body"
 
 
+def safe_object_name(obj):
+    """Return obj.Name, or None if the object is missing or a deleted FreeCAD proxy.
+
+    Note: Use this instead of ``getattr(obj, "Name", None)`` — the latter only
+    substitutes the default for :exc:`AttributeError`, not for the
+    :exc:`ReferenceError` FreeCAD raises on deleted document objects.
+    """
+    if obj is None:
+        return None
+    try:
+        return obj.Name
+    except ReferenceError:
+        return None
+
+
+def safe_getattr(obj, attr: str, default=None):
+    """Like :func:`getattr` but return *default* when the proxy is deleted (ReferenceError)."""
+    if obj is None:
+        return default
+    try:
+        return getattr(obj, attr)
+    except ReferenceError:
+        return default
+
+
+def is_live_object(obj) -> bool:
+    """Return True when obj is still valid (not a deleted FreeCAD proxy)."""
+    return safe_object_name(obj) is not None
+
+
 def is_body(obj) -> bool:
     """Return True when obj is a PartDesign Body."""
     return getattr(obj, "TypeId", None) == BODY_TYPE_ID
