@@ -6,6 +6,13 @@
 from types import SimpleNamespace
 
 
+class _DeletedFreecadProxy:
+    """Mimics FreeCAD when the underlying document object was removed."""
+
+    def __getattribute__(self, name):
+        raise ReferenceError(f"Cannot access attribute '{name}' of deleted object")
+
+
 class _Document:
     def __init__(self):
         self.recompute_count = 0
@@ -154,6 +161,18 @@ def test_sketch_only_visibility_pattern(mock_freecad):
     assert vo_body.Visibility is True
     assert vo_sk.Visibility is True
     assert vo_pad.Visibility is True
+
+
+def test_restore_captured_visibility_skips_deleted_objects(mock_freecad):
+    """Stale feature references in the capture list must not crash restore."""
+    vo_ok = SimpleNamespace(Visibility=False)
+    alive = SimpleNamespace(Name="Alive", ViewObject=vo_ok)
+    dead = _DeletedFreecadProxy()
+
+    from freecad.TipTrack.tip_controller import restore_captured_visibility
+
+    restore_captured_visibility([(alive, True), (dead, True)])
+    assert vo_ok.Visibility is True
 
 
 def test_visibility_capture_hide_restore_preserves_values(mock_freecad):

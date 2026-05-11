@@ -5,6 +5,8 @@
 
 import FreeCAD as App
 
+from freecad.TipTrack.body_resolver import safe_getattr
+
 
 def _document_for(obj):
     return getattr(obj, "Document", None) or getattr(App, "ActiveDocument", None)
@@ -90,17 +92,17 @@ def capture_body_group_visibility(body):
     items = [body] + list(getattr(body, "Group", []) or [])
     capture = []
     for obj in items:
-        vo = getattr(obj, "ViewObject", None)
+        vo = safe_getattr(obj, "ViewObject", None)
         if vo is None or not hasattr(vo, "Visibility"):
             continue
-        capture.append((obj, bool(getattr(vo, "Visibility", True))))
+        capture.append((obj, bool(safe_getattr(vo, "Visibility", True))))
     return capture
 
 
 def hide_captured_viewobjects(capture) -> None:
     """Force every captured object invisible (used at pre-history position)."""
     for obj, _ in capture:
-        vo = getattr(obj, "ViewObject", None)
+        vo = safe_getattr(obj, "ViewObject", None)
         if vo is not None and hasattr(vo, "Visibility"):
             vo.Visibility = False
 
@@ -108,7 +110,7 @@ def hide_captured_viewobjects(capture) -> None:
 def restore_captured_visibility(capture) -> None:
     """Restore visibilities from :func:`capture_body_group_visibility`."""
     for obj, vis in capture:
-        vo = getattr(obj, "ViewObject", None)
+        vo = safe_getattr(obj, "ViewObject", None)
         if vo is not None and hasattr(vo, "Visibility"):
             vo.Visibility = vis
 
@@ -145,14 +147,14 @@ def hide_body_and_all_group_features(body) -> None:
     if body is None:
         return
     for obj in [body] + list(getattr(body, "Group", []) or []):
-        vo = getattr(obj, "ViewObject", None)
+        vo = safe_getattr(obj, "ViewObject", None)
         if vo is not None and hasattr(vo, "Visibility"):
             vo.Visibility = False
 
 
 def set_viewobject_visibility(obj, visible: bool) -> None:
     """Assign ``ViewObject.Visibility`` when the object exposes a ViewObject."""
-    vo = getattr(obj, "ViewObject", None)
+    vo = safe_getattr(obj, "ViewObject", None)
     if vo is not None and hasattr(vo, "Visibility"):
         vo.Visibility = bool(visible)
 
