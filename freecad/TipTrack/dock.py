@@ -17,7 +17,10 @@ from freecad.TipTrack.i18n import translate
 from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets
 from freecad.TipTrack.strip import TimelineStrip
 from freecad.TipTrack.tip_controller import (
-    scrub_tip_to_index,
+    capture_body_group_visibility,
+    hide_captured_viewobjects,
+    restore_captured_visibility,
+    scrub_tip_to_position,
     set_tip,
     toggle_suppression,
 )
@@ -35,6 +38,8 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._refreshing_selector = False
         self._updating_navigation = False
         self._refresh_depth = 0
+        self._prehistory_visibility_capture: list = []
+        self._prehistory_capture_body = None
 
         self.setAllowedAreas(
             QtCore.Qt.BottomDockWidgetArea | QtCore.Qt.TopDockWidgetArea
@@ -61,8 +66,8 @@ class TipTrackDock(QtWidgets.QDockWidget):
 
         self._first_button = self._make_nav_button(
             "SP_MediaSkipBackward",
-            translate("First feature"),
-            lambda: self.scrub_to_index(0),
+            translate("Start"),
+            lambda: self.scrub_to_position(0),
         )
         self._previous_button = self._make_nav_button(
             "SP_MediaSeekBackward",
@@ -111,6 +116,9 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self.strip.featureRenameCommitted.connect(self.rename_feature)
         self.strip.featureDeleteRequested.connect(self.delete_feature)
         self.strip.featureMoved.connect(self._feature_moved)
+        self.strip._timeline_scrubber.featureChanged.connect(
+            self._on_timeline_playhead_position_changed
+        )
 
         timeline_panel = QtWidgets.QWidget(container)
         timeline_layout = QtWidgets.QVBoxLayout(timeline_panel)
@@ -188,6 +196,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
             self.strip.set_body(self._body)
 
             if self._body is None:
+                self._restore_prehistory_visibility_if_needed()
                 self._selected_feature = None
                 self._update_navigation_controls()
                 return
@@ -209,10 +218,9 @@ class TipTrackDock(QtWidgets.QDockWidget):
         if not features:
             return
 
-        current_index = self._current_feature_index(features)
-
-        next_index = max(0, min(current_index + step, len(features) - 1))
-        self.scrub_to_index(next_index)
+        current_pos = self._scrubber.value()
+        next_pos = max(0, min(current_pos + step, len(features)))
+        self.scrub_to_position(next_pos)
 
     def select_feature_at(self, index: int) -> None:
         """Select the feature at index in the current strip."""
@@ -225,32 +233,57 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self.strip.select_feature(features[safe_index])
         self._update_navigation_controls()
 
+    def scrub_to_position(self, position: int) -> None:
+        """Move the scrubber to timeline position ``0`` (pre-history) through ``N`` (full tip)."""
+        features = self.strip.visible_features()
+        if self._body is None or not features:
+            self._update_navigation_controls()
+            return
+
+        n = len(features)
+        pos = max(0, min(int(position), n))
+
+        if pos > 0:
+            self._restore_prehistory_visibility_if_needed()
+
+        try:
+            scrub_tip_to_position(self._body, pos)
+            if pos == 0:
+                self._selected_feature = None
+            else:
+                self._selected_feature = features[pos - 1]
+            self.strip.set_body(self._body, scrub_position=pos)
+            if pos == 0:
+                self.strip.set_selected_feature(None)
+                try:
+                    Gui.Selection.clearSelection()
+                except Exception:
+                    pass
+                # Apply after tip clear + recompute: FreeCAD may re-show the Body during recompute.
+                self._apply_prehistory_viewport_hide()
+            else:
+                self.strip.select_feature(self._selected_feature)
+            self._set_scrubber_value(pos)
+            self._update_navigation_controls()
+        except Exception as exc:
+            self._restore_prehistory_visibility_if_needed()
+            self._show_error("Timeline scrubber", exc)
+
     def scrub_to_index(self, index: int) -> None:
-        """Move the timeline scrubber and roll the Body tip to index."""
+        """Move the scrubber to feature ``Group[index]`` (slider position ``index + 1``)."""
         features = self.strip.visible_features()
         if self._body is None or not features:
             self._update_navigation_controls()
             return
 
         safe_index = max(0, min(index, len(features) - 1))
-        feature = features[safe_index]
-
-        try:
-            scrub_tip_to_index(self._body, safe_index)
-            self._selected_feature = feature
-            self.strip.set_body(self._body)
-            self.strip.set_selected_feature(feature)
-            self.strip.select_feature(feature)
-            self._set_scrubber_value(safe_index)
-            self._update_navigation_controls()
-        except Exception as exc:
-            self._show_error("Timeline scrubber", exc)
+        self.scrub_to_position(safe_index + 1)
 
     def select_last_feature(self) -> None:
         """Select the last feature in the current strip."""
         features = self.strip.visible_features()
         if features:
-            self.scrub_to_index(len(features) - 1)
+            self.scrub_to_position(len(features))
 
     def set_selected_as_tip(self) -> None:
         """Set the selected feature as the Body tip."""
@@ -339,6 +372,30 @@ class TipTrackDock(QtWidgets.QDockWidget):
         except Exception as exc:
             App.Console.PrintWarning(f"TipTrack: failed to toggle visibility: {exc}\n")
 
+    def _on_timeline_playhead_position_changed(self, position: int) -> None:
+        if self._updating_navigation:
+            return
+        self.scrub_to_position(int(position))
+
+    def _restore_prehistory_visibility_if_needed(self) -> None:
+        if self._prehistory_visibility_capture:
+            restore_captured_visibility(self._prehistory_visibility_capture)
+        self._prehistory_visibility_capture = []
+        self._prehistory_capture_body = None
+
+    def _apply_prehistory_viewport_hide(self) -> None:
+        body = self._body
+        if body is None:
+            return
+        if self._prehistory_capture_body is body and self._prehistory_visibility_capture:
+            hide_captured_viewobjects(self._prehistory_visibility_capture)
+            return
+        self._restore_prehistory_visibility_if_needed()
+        capture = capture_body_group_visibility(body)
+        self._prehistory_visibility_capture = capture
+        self._prehistory_capture_body = body
+        hide_captured_viewobjects(capture)
+
     def _set_selected_feature(self, feature) -> None:
         self._selected_feature = feature
         self.strip.set_selected_feature(feature)
@@ -401,6 +458,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
     def _body_selector_changed(self, index: int) -> None:
         if self._refreshing_selector or index < 0:
             return
+        self._restore_prehistory_visibility_if_needed()
         body_name = self._body_selector.itemData(index)
         body = self._body_by_name.get(body_name)
         if body is None:
@@ -449,13 +507,14 @@ class TipTrackDock(QtWidgets.QDockWidget):
     def _scrubber_changed(self, value: int) -> None:
         if self._updating_navigation:
             return
-        self.scrub_to_index(value)
+        self.scrub_to_position(value)
 
     def _toggle_playback(self) -> None:
         if self._play_button.isChecked():
             if not self.strip.visible_features():
                 self._play_button.setChecked(False)
                 return
+            self.scrub_to_position(0)
             self._play_timer.start()
         else:
             self._play_timer.stop()
@@ -466,12 +525,13 @@ class TipTrackDock(QtWidgets.QDockWidget):
             self._stop_playback()
             return
 
-        current_index = self._current_scrub_index(features)
-        if current_index >= len(features) - 1:
+        current_pos = self._current_scrub_position(features)
+        n = len(features)
+        if current_pos >= n:
             self._stop_playback()
             return
 
-        self.scrub_to_index(current_index + 1)
+        self.scrub_to_position(current_pos + 1)
 
     def _stop_playback(self) -> None:
         self._play_timer.stop()
@@ -488,20 +548,26 @@ class TipTrackDock(QtWidgets.QDockWidget):
             0,
         )
 
-    def _current_scrub_index(self, features: list | None = None) -> int:
+    def _current_scrub_position(self, features: list | None = None) -> int:
         features = features if features is not None else self.strip.visible_features()
         if not features:
             return 0
-        return max(0, min(self._scrubber.value(), len(features) - 1))
+        n = len(features)
+        return max(0, min(self._scrubber.value(), n))
 
     def _sync_scrubber_to_tip(self) -> None:
         features = self.strip.visible_features()
         tip = safe_getattr(self._body, "Tip", None)
-        tip_index = next(
-            (index for index, feature in enumerate(features) if feature is tip),
-            0,
-        )
-        self._set_scrubber_value(tip_index)
+        if tip is None:
+            tip_position = 0
+        else:
+            try:
+                tip_position = features.index(tip) + 1
+            except ValueError:
+                tip_position = 0
+        if tip_position > 0:
+            self._restore_prehistory_visibility_if_needed()
+        self._set_scrubber_value(tip_position)
 
     def _set_scrubber_value(self, value: int) -> None:
         self._updating_navigation = True
@@ -513,24 +579,24 @@ class TipTrackDock(QtWidgets.QDockWidget):
     def _update_navigation_controls(self) -> None:
         features = self.strip.visible_features()
         has_features = bool(features)
-        current_index = self._current_scrub_index(features) if has_features else 0
-        last_index = len(features) - 1
+        max_pos = len(features)
+        current_pos = self._current_scrub_position(features) if has_features else 0
 
         self._updating_navigation = True
         try:
             self._scrubber.setEnabled(has_features)
-            self._scrubber.setRange(0, max(0, last_index))
-            self._scrubber.setValue(current_index)
+            self._scrubber.setRange(0, max(0, max_pos))
+            self._scrubber.setValue(current_pos)
         finally:
             self._updating_navigation = False
 
-        at_first = current_index <= 0
-        at_last = current_index >= last_index
+        at_first = current_pos <= 0
+        at_last = current_pos >= max_pos
         self._first_button.setEnabled(has_features and not at_first)
         self._previous_button.setEnabled(has_features and not at_first)
         self._next_button.setEnabled(has_features and not at_last)
         self._last_button.setEnabled(has_features and not at_last)
-        self._play_button.setEnabled(has_features and not at_last)
+        self._play_button.setEnabled(has_features)
         if not has_features or at_last:
             self._stop_playback()
 

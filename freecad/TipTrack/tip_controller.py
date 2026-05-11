@@ -46,15 +46,71 @@ def tip_for_scrub_index(body, index: int):
     return None
 
 
-def scrub_tip_to_index(body, index: int):
-    """Roll body back to index and return the feature used as Body.Tip."""
+def scrub_tip_to_position(body, position: int):
+    """Roll the Body to a timeline slider position and return the feature used as Tip.
+
+    Position ``0`` clears ``Body.Tip`` (pre-history). Positions ``1..N`` map to
+    features ``Group[0]..Group[N-1]`` by setting Tip to the nearest safe
+    PartDesign tip at or before ``Group[position - 1]``.
+    """
     if body is None:
         raise ValueError("Cannot scrub without an active Body.")
 
-    tip_target = tip_for_scrub_index(body, index)
+    features = list(getattr(body, "Group", []) or [])
+    n = len(features)
+    pos = max(0, min(int(position), n))
+    if pos == 0:
+        body.Tip = None
+        _recompute(body)
+        return None
+
+    tip_target = tip_for_scrub_index(body, pos - 1)
     body.Tip = tip_target
     _recompute(body)
     return tip_target
+
+
+def scrub_tip_to_index(body, index: int):
+    """Roll body to feature ``Group[index]`` (same as ``scrub_tip_to_position(body, index + 1)``)."""
+    if body is None:
+        raise ValueError("Cannot scrub without an active Body.")
+
+    features = list(getattr(body, "Group", []) or [])
+    if not features:
+        return scrub_tip_to_position(body, 0)
+
+    safe_index = max(0, min(int(index), len(features) - 1))
+    return scrub_tip_to_position(body, safe_index + 1)
+
+
+def capture_body_group_visibility(body):
+    """Snapshot ``ViewObject.Visibility`` for the Body and its ``Group`` children."""
+    if body is None:
+        return []
+    items = [body] + list(getattr(body, "Group", []) or [])
+    capture = []
+    for obj in items:
+        vo = getattr(obj, "ViewObject", None)
+        if vo is None or not hasattr(vo, "Visibility"):
+            continue
+        capture.append((obj, bool(getattr(vo, "Visibility", True))))
+    return capture
+
+
+def hide_captured_viewobjects(capture) -> None:
+    """Force every captured object invisible (used at pre-history position)."""
+    for obj, _ in capture:
+        vo = getattr(obj, "ViewObject", None)
+        if vo is not None and hasattr(vo, "Visibility"):
+            vo.Visibility = False
+
+
+def restore_captured_visibility(capture) -> None:
+    """Restore visibilities from :func:`capture_body_group_visibility`."""
+    for obj, vis in capture:
+        vo = getattr(obj, "ViewObject", None)
+        if vo is not None and hasattr(vo, "Visibility"):
+            vo.Visibility = vis
 
 
 def toggle_suppression(feature) -> bool:

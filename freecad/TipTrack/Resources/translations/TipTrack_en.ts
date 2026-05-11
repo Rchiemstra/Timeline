@@ -48,8 +48,8 @@
       <translation>Mouse wheel pans strip</translation>
     </message>
     <message>
-      <source>First feature</source>
-      <translation>First feature</translation>
+      <source>Start</source>
+      <translation>Start</translation>
     </message>
     <message>
       <source>Previous feature</source>

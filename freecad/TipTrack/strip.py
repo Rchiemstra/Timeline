@@ -63,8 +63,12 @@ class TimelineStrip(QtWidgets.QWidget):
         """Return the Body currently displayed by the strip."""
         return self._body
 
-    def set_body(self, body) -> None:
-        """Rebuild the strip from body.Group."""
+    def set_body(self, body, *, scrub_position: int | None = None) -> None:
+        """Rebuild the strip from body.Group.
+
+        If *scrub_position* is given (``0..len(Group)``), place the playhead there.
+        Otherwise the playhead is inferred from ``body.Tip`` (``Tip is None`` → position ``0``).
+        """
         self._body = body
 
         if body is None:
@@ -85,23 +89,33 @@ class TimelineStrip(QtWidgets.QWidget):
         self._timeline_scrubber.set_placeholder(None)
         self._timeline_scrubber.set_features(features)
 
-        tip = getattr(body, "Tip", None)
-        if tip is not None:
-            try:
-                tip_i = features.index(tip)
-            except ValueError:
-                tip_i = 0
+        n = len(features)
+        if scrub_position is not None:
+            pos = max(0, min(int(scrub_position), n))
+            self._timeline_scrubber.set_playhead_position(pos, emit_signal=False)
         else:
-            tip_i = 0
-        self._timeline_scrubber.set_playhead_index(tip_i, emit_signal=False)
+            tip = getattr(body, "Tip", None)
+            if tip is not None:
+                try:
+                    tip_i = features.index(tip)
+                except ValueError:
+                    tip_i = 0
+                self._timeline_scrubber.set_playhead_position(
+                    tip_i + 1, emit_signal=False
+                )
+            else:
+                self._timeline_scrubber.set_playhead_position(0, emit_signal=False)
 
-    def apply_scrub_mute(self, scrub_index: int) -> None:
-        """Dim thumbnails after scrub_index so later history stays visible but subdued."""
-        self._timeline_scrubber.set_dim_after(scrub_index)
+    def apply_scrub_mute(self, scrub_position: int) -> None:
+        """Dim thumbnails with index >= *scrub_position* (``0`` dims the whole row)."""
+        self._timeline_scrubber.set_dim_after(scrub_position)
 
     def set_selected_feature(self, feature) -> None:
         """Move the playhead to the selected feature without emitting signals."""
         feats = self.visible_features()
+        if feature is None:
+            self._timeline_scrubber.set_playhead_position(0, emit_signal=False)
+            return
         selected_name = getattr(feature, "Name", None)
         for i, feat in enumerate(feats):
             if getattr(feat, "Name", None) == selected_name:
@@ -147,10 +161,17 @@ class TimelineStrip(QtWidgets.QWidget):
             return True
         return super().eventFilter(watched, event)
 
-    def _on_playhead_feature_changed(self, index: int) -> None:
+    def _on_playhead_feature_changed(self, position: int) -> None:
         feats = self.visible_features()
-        if 0 <= index < len(feats):
-            self._select_feature(feats[index])
+        if position <= 0:
+            try:
+                Gui.Selection.clearSelection()
+            except Exception:
+                pass
+            return
+        card_index = position - 1
+        if 0 <= card_index < len(feats):
+            self._select_feature(feats[card_index])
 
     def _on_playhead_double_clicked(self, index: int) -> None:
         feats = self.visible_features()

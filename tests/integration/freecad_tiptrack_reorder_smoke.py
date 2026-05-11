@@ -55,7 +55,6 @@ from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets  # noqa: E402
 from freecad.TipTrack.dock import TipTrackDock  # noqa: E402
 import freecad.TipTrack.init_gui as tiptrack_init_gui  # noqa: E402
 from freecad.TipTrack.reorder import can_move, move_feature  # noqa: E402
-from freecad.TipTrack.timeline_scrubber import CELL_GAP, THUMB_W  # noqa: E402
 
 
 def log(message: str) -> None:
@@ -78,9 +77,9 @@ def add_rectangle(sketch, x0: float, y0: float, x1: float, y1: float) -> None:
 
 
 def assert_playhead_right_of_card(dock: TipTrackDock, index: int, label: str) -> None:
-    """Verify the visual playhead is at the right boundary of card at index."""
+    """Verify the visual playhead is at the right boundary of card at *index*."""
     scrubber = dock.strip._timeline_scrubber
-    expected = scrubber.cell_left_x(index) + THUMB_W + CELL_GAP // 2
+    expected = scrubber.playhead_center_for_position(index + 1)
     actual = scrubber.playhead_center_x()
     if actual != expected:
         raise AssertionError(

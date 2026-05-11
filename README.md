@@ -14,10 +14,15 @@ drag cards to reorder features within their dependency constraints.
 
 ### Timeline scrubber
 
-Scrub through the full feature history with a click or keyboard arrows. The
-triangular playhead sits at the right edge of the active card, and the dock
-slider mirrors the position. Thumbnails after the playhead are dimmed to show
-suppressed history.
+Scrub through the full feature history with a click or keyboard arrows. Slider
+position ``0`` is *before the first feature*: the Body tip is cleared, timeline
+geometry is hidden in the 3D view, and the viewport shows nothing until you
+scrub forward. Positions ``1`` through ``N`` step through ``Body.Group`` in
+order (the first card is at position ``1``). The triangular playhead sits just
+left of the first thumbnail at position ``0``, and at the right edge of the
+active card for later positions. The dock slider mirrors the same positions.
+Thumbnails from the current position onward are dimmed so future history stays
+visible but subdued.
 
 ### Drag-to-reorder
 

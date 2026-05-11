@@ -31,8 +31,9 @@ class TimelineScrubber(QtWidgets.QWidget):
         self._pixmaps: list[QtGui.QPixmap] = []
         self._labels: list[str] = []
         self._thumb_cache: dict[tuple[str, str], QtGui.QPixmap] = {}
-        self._playhead_index = 0
-        self._dim_after: int | None = None
+        # Slider position 0 = pre-history; 1..N align with feature cards 0..N-1.
+        self._playhead_position = 0
+        self._dim_from_position: int | None = None
         self._dragging_playhead = False
         self._placeholder: str | None = None
 
@@ -73,8 +74,8 @@ class TimelineScrubber(QtWidgets.QWidget):
         self._features = []
         self._pixmaps = []
         self._labels = []
-        self._playhead_index = 0
-        self._dim_after = None
+        self._playhead_position = 0
+        self._dim_from_position = None
         self.updateGeometry()
         self.update()
 
@@ -96,11 +97,10 @@ class TimelineScrubber(QtWidgets.QWidget):
                 fm.elidedText(label, QtCore.Qt.ElideRight, THUMB_W),
             )
         if self._features:
-            self._playhead_index = max(
-                0, min(self._playhead_index, len(self._features) - 1)
-            )
+            n = len(self._features)
+            self._playhead_position = max(0, min(self._playhead_position, n))
         else:
-            self._playhead_index = 0
+            self._playhead_position = 0
         self.updateGeometry()
         self.update()
 
@@ -109,13 +109,23 @@ class TimelineScrubber(QtWidgets.QWidget):
         icon_blob = str(getattr(vo, "Icon", "") if vo else "")
         return (str(getattr(feat, "Name", "")), icon_blob[:160])
 
-    def set_playhead_index(self, index: int, *, emit_signal: bool = False) -> None:
+    def playhead_center_for_position(self, position: int) -> int:
+        """X center of the playhead for timeline *position* (``0`` = pre-history)."""
+        n = len(self._features)
+        pos = max(0, min(int(position), n))
+        if pos == 0:
+            return max(TRI_H // 2 + 1, self.cell_left_x(0) - CELL_GAP // 2 - 2)
+        return self.cell_left_x(pos - 1) + THUMB_W + CELL_GAP // 2
+
+    def set_playhead_position(self, position: int, *, emit_signal: bool = False) -> None:
+        """Move the playhead to slider position ``0`` (pre-history) through ``N`` (full history)."""
         if not self._features:
             return
-        idx = max(0, min(int(index), len(self._features) - 1))
+        n = len(self._features)
+        idx = max(0, min(int(position), n))
         old_cx = self.playhead_center_x()
-        changed = idx != self._playhead_index
-        self._playhead_index = idx
+        changed = idx != self._playhead_position
+        self._playhead_position = idx
         new_cx = self.playhead_center_x()
         dirty = QtCore.QRect(
             min(old_cx, new_cx) - TRI_H,
@@ -128,15 +138,36 @@ class TimelineScrubber(QtWidgets.QWidget):
         if emit_signal and changed:
             self.featureChanged.emit(idx)
 
-    def set_dim_after(self, scrub_index: int | None) -> None:
-        """Visually mute thumbnails with index strictly greater than scrub_index."""
-        self._dim_after = scrub_index
+    def set_playhead_index(self, feature_index: int, *, emit_signal: bool = False) -> None:
+        """Move playhead to the right edge of feature card *feature_index* (slider = index + 1)."""
+        if not self._features:
+            return
+        self.set_playhead_position(int(feature_index) + 1, emit_signal=emit_signal)
+
+    def set_dim_after(self, scrub_position: int | None) -> None:
+        """Dim feature cards with index >= *scrub_position* (0 dims every thumbnail)."""
+        self._dim_from_position = scrub_position
         self.update()
 
+    def playhead_position(self) -> int:
+        return self._playhead_position
+
     def playhead_index(self) -> int:
-        return self._playhead_index
+        """Legacy: feature index under the playhead, or ``0`` at pre-history."""
+        if self._playhead_position <= 0:
+            return 0
+        return self._playhead_position - 1
+
+    def position_at_x(self, x: int) -> int:
+        """Map pixel *x* to slider position ``0..N``."""
+        if not self._features:
+            return 0
+        n = len(self._features)
+        centers = [self.playhead_center_for_position(p) for p in range(n + 1)]
+        return min(range(n + 1), key=lambda p: abs(centers[p] - x))
 
     def index_at_x(self, x: int) -> int:
+        """Feature card index ``0..N-1`` for hit-testing (e.g. double-click on a card)."""
         if not self._features:
             return 0
         stride = self.cell_stride()
@@ -156,7 +187,7 @@ class TimelineScrubber(QtWidgets.QWidget):
         return MARGIN_H + index * self.cell_stride()
 
     def playhead_center_x(self) -> int:
-        return self.cell_left_x(self._playhead_index) + THUMB_W + CELL_GAP // 2
+        return self.playhead_center_for_position(self._playhead_position)
 
     def feature_at_index(self, index: int):
         if 0 <= index < len(self._features):
@@ -213,7 +244,7 @@ class TimelineScrubber(QtWidgets.QWidget):
 
             icon_rect = QtCore.QRect(0, 0, ICON_SIZE, ICON_SIZE)
             icon_rect.moveCenter(thumb_rect.center())
-            muted = self._dim_after is not None and i > self._dim_after
+            muted = self._dim_from_position is not None and i >= self._dim_from_position
             if muted:
                 painter.setOpacity(0.38)
             painter.drawPixmap(icon_rect.topLeft(), pm)
@@ -249,9 +280,9 @@ class TimelineScrubber(QtWidgets.QWidget):
             and not self._placeholder
         ):
             self._dragging_playhead = True
-            idx = self.index_at_x(event.pos().x())
-            self.set_playhead_index(idx, emit_signal=False)
-            self.featureChanged.emit(self._playhead_index)
+            pos = self.position_at_x(event.pos().x())
+            self.set_playhead_position(pos, emit_signal=False)
+            self.featureChanged.emit(self._playhead_position)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -262,8 +293,8 @@ class TimelineScrubber(QtWidgets.QWidget):
             and event.buttons() & QtCore.Qt.LeftButton
             and self._features
         ):
-            idx = self.index_at_x(event.pos().x())
-            self.set_playhead_index(idx, emit_signal=True)
+            pos = self.position_at_x(event.pos().x())
+            self.set_playhead_position(pos, emit_signal=True)
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -290,7 +321,7 @@ class TimelineScrubber(QtWidgets.QWidget):
             super().wheelEvent(event)
             return
         step = 1 if delta < 0 else -1
-        self.set_playhead_index(self._playhead_index + step, emit_signal=True)
+        self.set_playhead_position(self._playhead_position + step, emit_signal=True)
         event.accept()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
@@ -298,21 +329,21 @@ class TimelineScrubber(QtWidgets.QWidget):
             super().keyPressEvent(event)
             return
         key = event.key()
-        last = len(self._features) - 1
+        last = len(self._features)
         if key == QtCore.Qt.Key_Left:
-            self.set_playhead_index(self._playhead_index - 1, emit_signal=True)
+            self.set_playhead_position(self._playhead_position - 1, emit_signal=True)
             event.accept()
             return
         if key == QtCore.Qt.Key_Right:
-            self.set_playhead_index(self._playhead_index + 1, emit_signal=True)
+            self.set_playhead_position(self._playhead_position + 1, emit_signal=True)
             event.accept()
             return
         if key == QtCore.Qt.Key_Home:
-            self.set_playhead_index(0, emit_signal=True)
+            self.set_playhead_position(0, emit_signal=True)
             event.accept()
             return
         if key == QtCore.Qt.Key_End:
-            self.set_playhead_index(last, emit_signal=True)
+            self.set_playhead_position(last, emit_signal=True)
             event.accept()
             return
         super().keyPressEvent(event)

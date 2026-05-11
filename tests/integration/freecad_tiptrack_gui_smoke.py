@@ -18,14 +18,14 @@ Test steps 1–22 from the TipTrack Playback Scrubber spec:
   1–10  Model creation (PartDesign Body, two Pads, a through-Pocket).
   11    Rename key features so the timeline shows human-readable labels.
   12    Assert timeline card order and labels.
-  13–14 Scrub back to BaseSketch; assert Tip clears before first solid.
-  15–16 Scrub to BasePad; assert padded solid is restored.
+  13–14 Scrub to pre-history (slider ``0``): ``Body.Tip`` cleared, geometry hidden, blank viewport.
+  15–16 Scrub to BaseSketch (first card); then BasePad with padded solid restored.
   17–18 Scrub to ThroughHole; assert full holed model is restored.
   19–20 Step-back and step-forward; assert Tip and volume at each step.
-  21–22 Playback from start; assert it walks through to ThroughHole and stops.
+  21–22 Playback from pre-history; assert it walks through to ThroughHole and stops.
 
 Throughout: after every scrub the playhead triangle must sit at the **right** boundary
-of the active card (i.e. in the gap between the active and next card, not at its centre).
+of the active card for positions ``1..N``, or just left of the first card at position ``0``.
 """
 
 from __future__ import annotations
@@ -62,7 +62,6 @@ from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets  # noqa: E402
 from freecad.TipTrack.dock import TipTrackDock  # noqa: E402
 import freecad.TipTrack.init_gui as tiptrack_init_gui  # noqa: E402
 from freecad.TipTrack.reorder import can_move  # noqa: E402
-from freecad.TipTrack.timeline_scrubber import CELL_GAP, THUMB_W  # noqa: E402
 
 
 def log(message: str) -> None:
@@ -178,19 +177,30 @@ def timeline_card_labels(dock: TipTrackDock, body) -> list[str]:
     return [str(f.Label) for f in body.Group]
 
 
-def assert_playhead_right_of_card(dock: TipTrackDock, index: int, label: str) -> None:
-    """Verify the visual playhead sits at the right boundary of card at index.
+def assert_playhead_right_of_card(dock: TipTrackDock, card_index: int, label: str) -> None:
+    """Verify the visual playhead sits at the right boundary of card *card_index*.
 
     The playhead triangle/line must be in the gap to the right of the active card
     (not centred on it) so the visual boundary between active and future history is clear.
     """
     scrubber = dock.strip._timeline_scrubber
-    expected = scrubber.cell_left_x(index) + THUMB_W + CELL_GAP // 2
+    expected = scrubber.playhead_center_for_position(card_index + 1)
     actual = scrubber.playhead_center_x()
     if actual != expected:
         raise AssertionError(
-            f"Playhead at '{label}' (idx {index}): "
+            f"Playhead at '{label}' (card idx {card_index}): "
             f"expected right-of-card x={expected}, got x={actual}"
+        )
+
+
+def assert_playhead_prehistory(dock: TipTrackDock, label: str) -> None:
+    """Verify the playhead is in the pre-history slot (before the first card)."""
+    scrubber = dock.strip._timeline_scrubber
+    expected = scrubber.playhead_center_for_position(0)
+    actual = scrubber.playhead_center_x()
+    if actual != expected:
+        raise AssertionError(
+            f"Playhead at '{label}': expected pre-history x={expected}, got x={actual}"
         )
 
 
@@ -209,7 +219,15 @@ def prepare_demo_view_colors(body) -> None:
                 pass
 
 
-def screenshot(main_window, doc, body, dock: TipTrackDock, name: str) -> str:
+def screenshot(
+    main_window,
+    doc,
+    body,
+    dock: TipTrackDock,
+    name: str,
+    *,
+    show_body_geometry: bool = True,
+) -> str:
     """Stack the rendered 3D view above the TipTrack dock (viewport + timeline strip)."""
     # Scroll timeline to beginning so all feature cards are visible from the left.
     try:
@@ -217,8 +235,7 @@ def screenshot(main_window, doc, body, dock: TipTrackDock, name: str) -> str:
     except Exception:
         pass
 
-    frame_model(doc, body)
-    dock.raise_()
+    frame_model(doc, body, show_body_geometry=show_body_geometry)
     dock.show()
     for _ in range(4):
         QtWidgets.QApplication.processEvents()
@@ -297,7 +314,7 @@ def screenshot(main_window, doc, body, dock: TipTrackDock, name: str) -> str:
     return str(out_path)
 
 
-def frame_model(doc, body) -> None:
+def frame_model(doc, body, *, show_body_geometry: bool = True) -> None:
     """Make the Body visible and framed in the active document's 3D view."""
     doc_name = getattr(doc, "Name", None)
     if doc_name is None:
@@ -309,10 +326,11 @@ def frame_model(doc, body) -> None:
 
     Gui.setActiveDocument(doc_name)
 
-    body.ViewObject.Visibility = True
-    tip = getattr(body, "Tip", None)
-    if tip is not None and hasattr(tip, "ViewObject"):
-        tip.ViewObject.Visibility = True
+    if show_body_geometry:
+        body.ViewObject.Visibility = True
+        tip = getattr(body, "Tip", None)
+        if tip is not None and hasattr(tip, "ViewObject"):
+            tip.ViewObject.Visibility = True
 
     Gui.Selection.clearSelection()
     try:
@@ -413,6 +431,7 @@ def main() -> None:
     doc.recompute()
     features = dock.strip.visible_features()
     last_idx = len(features) - 1
+    max_pos = len(features)
 
     # Capture reference volumes before any scrubbing.
     dock.scrub_to_index(last_idx)
@@ -447,17 +466,18 @@ def main() -> None:
         screenshot(main_window, doc, body, dock, "freecad_tiptrack_frame_00_initial.png")
     )
 
-    # Steps 13–14: scrub back to BaseSketch (index 0).
-    # Body.Tip clears (no solid above a sketch); playhead sits right of card 0.
-    log("step 13 scrub back to BaseSketch (index 0)")
+    # Steps 13–14: slider position 0 = pre-history (no tip, hidden Body, blank viewport).
+    log("step 13 scrub to pre-history (slider 0)")
     dock._scrubber.setValue(0)
     QtWidgets.QApplication.processEvents()
     if body.Tip is not None:
-        raise AssertionError("Scrubber did not clear Body.Tip before first Pad")
-    if dock._selected_feature is not sketch:
-        raise AssertionError("Scrubber selection did not sync to BaseSketch")
-    assert_playhead_right_of_card(dock, 0, "BaseSketch")
-    log("step 14 body tip cleared; playhead right of BaseSketch OK")
+        raise AssertionError("Pre-history scrubber position did not clear Body.Tip")
+    if dock._selected_feature is not None:
+        raise AssertionError("Pre-history should clear timeline selection")
+    if body.ViewObject.Visibility:
+        raise AssertionError("Pre-history should hide the Body in the 3D view")
+    assert_playhead_prehistory(dock, "pre-history")
+    log("step 14 pre-history: tip cleared, geometry hidden, playhead left of first card")
     frames.append(
         screenshot(
             main_window,
@@ -465,12 +485,21 @@ def main() -> None:
             body,
             dock,
             "freecad_tiptrack_frame_01_scrub_sketch.png",
+            show_body_geometry=False,
         )
     )
 
-    # Steps 15–16: scrub to BasePad (index 1); padded solid restored at tip.
-    log("step 15 scrub to BasePad (index 1)")
+    # Steps 15–16: scrub to BaseSketch (first card, position 1); Tip still None; then BasePad.
+    log("step 15 scrub to BaseSketch (position 1)")
     dock._scrubber.setValue(1)
+    QtWidgets.QApplication.processEvents()
+    if body.Tip is not None:
+        raise AssertionError("Scrub to first sketch should leave Body.Tip unset")
+    if dock._selected_feature is not sketch:
+        raise AssertionError("Scrubber selection did not sync to BaseSketch")
+    assert_playhead_right_of_card(dock, 0, "BaseSketch")
+    log("step 15b scrub to BasePad (position 2)")
+    dock._scrubber.setValue(2)
     QtWidgets.QApplication.processEvents()
     if body.Tip is not pad:
         raise AssertionError("Scrubber did not update Body.Tip to BasePad")
@@ -484,8 +513,8 @@ def main() -> None:
         )
     )
 
-    # Pad001 tip (index 3) — second pad stacked; pocket not yet applied.
-    dock._scrubber.setValue(3)
+    # Pad001 tip (feature index 3) — second pad stacked; pocket not yet applied.
+    dock._scrubber.setValue(4)
     QtWidgets.QApplication.processEvents()
     if body.Tip is not pad2:
         raise AssertionError("Scrubber did not update Body.Tip to Pad001")
@@ -502,9 +531,9 @@ def main() -> None:
         )
     )
 
-    # Steps 17–18: scrub to ThroughHole (last_idx); full holed model restored.
-    log(f"step 17 scrub to ThroughHole (index {last_idx})")
-    dock._scrubber.setValue(last_idx)
+    # Steps 17–18: scrub to ThroughHole (full history, slider ``max_pos``).
+    log(f"step 17 scrub to ThroughHole (slider position {max_pos})")
+    dock._scrubber.setValue(max_pos)
     QtWidgets.QApplication.processEvents()
     if body.Tip is not pocket:
         raise AssertionError("Scrubber did not restore ThroughHole as tip")
@@ -526,7 +555,7 @@ def main() -> None:
     for _ in range(40):
         dock._scrubber.setValue(0)
         QtWidgets.QApplication.processEvents()
-        dock._scrubber.setValue(last_idx)
+        dock._scrubber.setValue(max_pos)
         QtWidgets.QApplication.processEvents()
     if round(body.Shape.Volume, 3) != final_volume or body.Tip is not pocket:
         raise AssertionError("Model diverged after rapid scrubbing")
@@ -543,9 +572,12 @@ def main() -> None:
         raise AssertionError(
             "Step back did not restore Pad001-only volume (hole should not cut)"
         )
-    step_back_idx = dock.strip._timeline_scrubber.playhead_index()
-    assert_playhead_right_of_card(dock, step_back_idx, f"step-back card {step_back_idx}")
-    log(f"step 20a step-back at card {step_back_idx}; playhead right OK")
+    step_back_pos = dock.strip._timeline_scrubber.playhead_position()
+    step_back_card = step_back_pos - 1
+    assert_playhead_right_of_card(
+        dock, step_back_card, f"step-back card {step_back_card}"
+    )
+    log(f"step 20a step-back at card {step_back_card}; playhead right OK")
 
     dock.select_adjacent_feature(1)
     QtWidgets.QApplication.processEvents()
@@ -556,16 +588,16 @@ def main() -> None:
     assert_playhead_right_of_card(dock, last_idx, "ThroughHole")
     log("step 20b step-forward restored ThroughHole; playhead right OK")
 
-    # Steps 21–22: playback from index 0 walks through all features and stops at end.
-    log("step 21 start playback from index 0")
-    dock.scrub_to_index(0)
+    # Steps 21–22: playback from pre-history walks positions 0..N and stops at full tip.
+    log("step 21 start playback from pre-history (slider 0)")
+    dock.scrub_to_position(0)
     QtWidgets.QApplication.processEvents()
     dock._play_button.setChecked(True)
     dock._toggle_playback()
     if not dock._play_button.isChecked():
         raise AssertionError("Play did not start")
     guard = 0
-    while dock._play_button.isChecked() and guard < last_idx + 8:
+    while dock._play_button.isChecked() and guard < max_pos + 10:
         dock._play_timer.timeout.emit()
         QtWidgets.QApplication.processEvents()
         guard += 1

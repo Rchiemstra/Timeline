@@ -68,6 +68,76 @@ def test_tip_for_scrub_index_uses_nearest_partdesign_feature(mock_freecad):
     assert tip_for_scrub_index(body, 2) is pad
 
 
+def test_scrub_tip_to_position_zero_clears_tip(mock_freecad):
+    """Position 0 clears Body.Tip and recomputes."""
+    document = _Document()
+    sketch = SimpleNamespace(Name="Sketch", TypeId="Sketcher::SketchObject")
+    pad = SimpleNamespace(Name="Pad", TypeId="PartDesign::Pad")
+    body = SimpleNamespace(Group=[sketch, pad], Tip=pad, Document=document)
+
+    from freecad.TipTrack.tip_controller import scrub_tip_to_position
+
+    assert scrub_tip_to_position(body, 0) is None
+    assert body.Tip is None
+    assert document.recompute_count == 1
+
+
+def test_scrub_tip_to_position_one_sketch_only(mock_freecad):
+    """Position 1 reaches the first sketch (no PartDesign tip yet)."""
+    document = _Document()
+    sketch = SimpleNamespace(Name="Sketch", TypeId="Sketcher::SketchObject")
+    pad = SimpleNamespace(Name="Pad", TypeId="PartDesign::Pad")
+    body = SimpleNamespace(Group=[sketch, pad], Tip=pad, Document=document)
+
+    from freecad.TipTrack.tip_controller import scrub_tip_to_position
+
+    assert scrub_tip_to_position(body, 1) is None
+    assert body.Tip is None
+    assert document.recompute_count == 1
+
+
+def test_scrub_tip_to_position_two_restores_pad(mock_freecad):
+    """Position 2 restores the first Pad in a [Sketch, Pad] body."""
+    document = _Document()
+    sketch = SimpleNamespace(Name="Sketch", TypeId="Sketcher::SketchObject")
+    pad = SimpleNamespace(Name="Pad", TypeId="PartDesign::Pad")
+    body = SimpleNamespace(Group=[sketch, pad], Tip=None, Document=document)
+
+    from freecad.TipTrack.tip_controller import scrub_tip_to_position
+
+    assert scrub_tip_to_position(body, 2) is pad
+    assert body.Tip is pad
+    assert document.recompute_count == 1
+
+
+def test_visibility_capture_hide_restore_preserves_values(mock_freecad):
+    """Pre-history hide/restore round-trips Body and feature visibility flags."""
+    document = _Document()
+    vo_b = SimpleNamespace(Visibility=True)
+    vo_s = SimpleNamespace(Visibility=False)
+    vo_p = SimpleNamespace(Visibility=True)
+    sketch = SimpleNamespace(Name="Sketch", ViewObject=vo_s)
+    pad = SimpleNamespace(Name="Pad", ViewObject=vo_p)
+    body = SimpleNamespace(Name="Body", Group=[sketch, pad], ViewObject=vo_b, Document=document)
+
+    from freecad.TipTrack.tip_controller import (
+        capture_body_group_visibility,
+        hide_captured_viewobjects,
+        restore_captured_visibility,
+    )
+
+    cap = capture_body_group_visibility(body)
+    hide_captured_viewobjects(cap)
+    assert vo_b.Visibility is False
+    assert vo_s.Visibility is False
+    assert vo_p.Visibility is False
+
+    restore_captured_visibility(cap)
+    assert vo_b.Visibility is True
+    assert vo_s.Visibility is False
+    assert vo_p.Visibility is True
+
+
 def test_scrub_tip_to_index_updates_tip_and_recomputes(mock_freecad):
     """The scrubber helper can clear the tip before the first solid feature."""
     document = _Document()

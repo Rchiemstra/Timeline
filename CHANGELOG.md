@@ -5,7 +5,12 @@
 
 ## Unreleased
 
-- Nothing yet.
+- Added pre-history timeline position ``0`` (``Body.Tip`` cleared, viewport
+  geometry hidden with visibility restored when leaving), slider range
+  ``0..N``, and position-based scrubbing via ``scrub_tip_to_position``. Feature
+  index helpers still map as ``position = feature_index + 1``. Playback begins
+  at pre-history and advances through full history. Pre-history visibility is
+  applied after the tip clear and document recompute so the 3D view stays hidden.
 
 ## 0.1.0 - 2026-05-09
 
