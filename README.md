@@ -35,6 +35,17 @@ link are rejected with a tooltip explaining why.
 
 ![TipTrack reorder demo](Resources/Media/demo-reorder.gif)
 
+### Body Placement cards
+
+Moving the active Body (changing its ``Placement``) is recorded as a dedicated
+card on the timeline, interleaved chronologically with the feature cards.
+Scrubbing onto a placement card re-applies that stored placement and rolls
+the tip back to the anchor feature; position ``0`` restores the original
+baseline placement that TipTrack captured the first time it saw the Body.
+Right-click a placement card to Restore as current, Rename, or Delete it.
+Placement capture is enabled by default and can be toggled off in
+``Edit → Preferences → TipTrack → Capture Body moves on timeline``.
+
 ## Install
 
 TipTrack targets FreeCAD 1.0 or newer.
@@ -102,7 +113,7 @@ Expected result: all pytest tests pass, `package.xml parsed`, and Ruff reports
 
 ### FreeCAD GUI integration tests in Docker
 
-Two integration tests run FreeCAD 1.0.2 under Xvfb, build a PartDesign model,
+Three integration tests run FreeCAD 1.0.2 under Xvfb, build a PartDesign model,
 exercise the TipTrack dock, and write screenshots + a summary JSON to
 `artifacts/`.
 
@@ -110,6 +121,7 @@ exercise the TipTrack dock, and write screenshots + a summary JSON to
 |---|---|---|
 | Scrubber smoke | `freecad_tiptrack_gui_smoke.py` | Playhead rollback, volume checks, 5-frame screenshots |
 | Reorder smoke | `freecad_tiptrack_reorder_smoke.py` | Valid reorder, 3 rejected moves, scrub after reorder |
+| Placement smoke | `freecad_tiptrack_placement_smoke.py` | Auto-baseline snapshot, two Body moves captured + scrubbed, pre-history baseline restore |
 
 On Windows, run both tests with the helper script:
 
@@ -126,10 +138,13 @@ Artifacts written to `artifacts/`:
 |---|---|
 | `freecad-tiptrack-integration.gif` / `.mp4` | Scrubber test recording |
 | `freecad-tiptrack-reorder.gif` / `.mp4` | Reorder test recording |
+| `freecad-tiptrack-placement.gif` / `.mp4` | Placement test recording |
 | `tiptrack_integration.FCStd` | Saved model from scrubber test |
 | `tiptrack_reorder.FCStd` | Saved model from reorder test |
+| `tiptrack_placement.FCStd` | Saved model from placement test |
 | `tiptrack_integration_summary.json` | Volumes, frame paths |
 | `tiptrack_reorder_summary.json` | Group order, volumes, frame paths |
+| `tiptrack_placement_summary.json` | Snapshot list, unified item order, frame paths |
 
 Full project notes live in [Documentation/README.md](Documentation/README.md).
 

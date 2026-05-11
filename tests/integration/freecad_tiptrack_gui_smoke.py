@@ -261,7 +261,7 @@ def screenshot(
     log(
         f"screenshot dock size={dock.width()}x{dock.height()} "
         f"scrubber size={scrubber.width()}x{scrubber.height()} "
-        f"features={len(scrubber._features)}"
+        f"items={len(scrubber.items())}"
     )
 
     def _unlink_tmp() -> None:

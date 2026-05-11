@@ -14,6 +14,8 @@ DEFAULT_ITEM_SIZE = 56
 DEFAULT_SHOW_LABELS = True
 DEFAULT_VISIBLE_ON_STARTUP = True
 DEFAULT_SCROLL_WHEEL_PAN = True
+DEFAULT_CAPTURE_BODY_PLACEMENT = True
+DEFAULT_PLACEMENT_CAPTURE_DEBOUNCE_MS = 400
 
 
 def _params():
@@ -83,6 +85,29 @@ def set_scroll_wheel_pan(value: bool) -> None:
         params.SetBool("ScrollWheelPan", bool(value))
 
 
+def get_capture_body_placement() -> bool:
+    """Return whether Body Placement changes are recorded as timeline cards."""
+    params = _params()
+    if params is None:
+        return DEFAULT_CAPTURE_BODY_PLACEMENT
+    return bool(params.GetBool("CaptureBodyPlacement", DEFAULT_CAPTURE_BODY_PLACEMENT))
+
+
+def set_capture_body_placement(value: bool) -> None:
+    """Persist whether Body Placement changes are recorded as timeline cards."""
+    params = _params()
+    if params is not None:
+        params.SetBool("CaptureBodyPlacement", bool(value))
+
+
+def get_placement_capture_debounce_ms() -> int:
+    """Return the debounce interval (ms) used to coalesce drag-driven moves."""
+    params = _params()
+    if params is None:
+        return DEFAULT_PLACEMENT_CAPTURE_DEBOUNCE_MS
+    return int(params.GetInt("PlacementCaptureDebounceMs", DEFAULT_PLACEMENT_CAPTURE_DEBOUNCE_MS))
+
+
 class TipTrackPreferences:
     """FreeCAD preference page for TipTrack."""
 
@@ -98,11 +123,16 @@ class TipTrackPreferences:
         self.show_labels = QtWidgets.QCheckBox(self.form)
         self.visible_on_startup = QtWidgets.QCheckBox(self.form)
         self.scroll_wheel_pan = QtWidgets.QCheckBox(self.form)
+        self.capture_body_placement = QtWidgets.QCheckBox(self.form)
 
         layout.addRow(translate("Item size"), self.item_size)
         layout.addRow(translate("Show labels"), self.show_labels)
         layout.addRow(translate("Visible on startup"), self.visible_on_startup)
         layout.addRow(translate("Mouse wheel pans strip"), self.scroll_wheel_pan)
+        layout.addRow(
+            translate("Capture Body moves on timeline"),
+            self.capture_body_placement,
+        )
 
         self.loadSettings()
 
@@ -112,6 +142,7 @@ class TipTrackPreferences:
         set_show_labels(self.show_labels.isChecked())
         set_visible_on_startup(self.visible_on_startup.isChecked())
         set_scroll_wheel_pan(self.scroll_wheel_pan.isChecked())
+        set_capture_body_placement(self.capture_body_placement.isChecked())
 
     def loadSettings(self) -> None:
         """Load FreeCAD preferences into the form."""
@@ -119,4 +150,5 @@ class TipTrackPreferences:
         self.show_labels.setChecked(get_show_labels())
         self.visible_on_startup.setChecked(get_visible_on_startup())
         self.scroll_wheel_pan.setChecked(get_scroll_wheel_pan())
+        self.capture_body_placement.setChecked(get_capture_body_placement())
 

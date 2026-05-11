@@ -8,6 +8,11 @@ import FreeCADGui as Gui
 
 from freecad.TipTrack.feature_item import MIME_FEATURE
 from freecad.TipTrack.i18n import translate
+from freecad.TipTrack.placement_history import (
+    build_items,
+    feature_index_to_item_position,
+    item_position_to_feature_gap,
+)
 from freecad.TipTrack.Qt.Gui import QtCore, QtWidgets
 from freecad.TipTrack.reorder import can_move, move_feature
 from freecad.TipTrack.timeline_scrubber import THUMB_W, TimelineScrubber
@@ -23,6 +28,7 @@ class TimelineStrip(QtWidgets.QWidget):
     featureRenameCommitted = QtCore.Signal(object, str)
     featureDeleteRequested = QtCore.Signal(object)
     featureMoved = QtCore.Signal(object, int)
+    placementContextRequested = QtCore.Signal(str, QtCore.QPoint)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -53,6 +59,9 @@ class TimelineStrip(QtWidgets.QWidget):
         self._timeline_scrubber.featureDoubleClicked.connect(
             self._on_playhead_double_clicked
         )
+        self._timeline_scrubber.itemContextRequested.connect(
+            self._on_item_context_requested
+        )
 
         for target in (self, self._timeline_scrubber, self._scroll_area.viewport()):
             target.setAcceptDrops(True)
@@ -64,10 +73,11 @@ class TimelineStrip(QtWidgets.QWidget):
         return self._body
 
     def set_body(self, body, *, scrub_position: int | None = None) -> None:
-        """Rebuild the strip from body.Group.
+        """Rebuild the strip from body.Group and stored placement snapshots.
 
-        If *scrub_position* is given (``0..len(Group)``), place the playhead there.
-        Otherwise the playhead is inferred from ``body.Tip`` (``Tip is None`` → position ``0``).
+        If *scrub_position* is given (item-space ``0..len(items)``), place the
+        playhead there. Otherwise the playhead is inferred from ``body.Tip``
+        (``Tip is None`` → position ``0``).
         """
         self._body = body
 
@@ -79,7 +89,8 @@ class TimelineStrip(QtWidgets.QWidget):
             return
 
         features = list(getattr(body, "Group", []) or [])
-        if not features:
+        items = build_items(body, features=features)
+        if not items:
             self._timeline_scrubber.clear()
             self._timeline_scrubber.set_placeholder(
                 translate("Active Body has no features.")
@@ -87,9 +98,9 @@ class TimelineStrip(QtWidgets.QWidget):
             return
 
         self._timeline_scrubber.set_placeholder(None)
-        self._timeline_scrubber.set_features(features)
+        self._timeline_scrubber.set_items(items)
 
-        n = len(features)
+        n = len(items)
         if scrub_position is not None:
             pos = max(0, min(int(scrub_position), n))
             self._timeline_scrubber.set_playhead_position(pos, emit_signal=False)
@@ -97,12 +108,11 @@ class TimelineStrip(QtWidgets.QWidget):
             tip = getattr(body, "Tip", None)
             if tip is not None:
                 try:
-                    tip_i = features.index(tip)
+                    tip_feature_index = features.index(tip)
                 except ValueError:
-                    tip_i = 0
-                self._timeline_scrubber.set_playhead_position(
-                    tip_i + 1, emit_signal=False
-                )
+                    tip_feature_index = 0
+                pos = feature_index_to_item_position(items, tip_feature_index)
+                self._timeline_scrubber.set_playhead_position(pos, emit_signal=False)
             else:
                 self._timeline_scrubber.set_playhead_position(0, emit_signal=False)
 
@@ -112,13 +122,13 @@ class TimelineStrip(QtWidgets.QWidget):
 
     def set_selected_feature(self, feature) -> None:
         """Move the playhead to the selected feature without emitting signals."""
-        feats = self.visible_features()
+        items = self.visible_items()
         if feature is None:
             self._timeline_scrubber.set_playhead_position(0, emit_signal=False)
             return
         selected_name = getattr(feature, "Name", None)
-        for i, feat in enumerate(feats):
-            if getattr(feat, "Name", None) == selected_name:
+        for i, item in enumerate(items):
+            if item.is_feature and getattr(item.feature, "Name", None) == selected_name:
                 self._timeline_scrubber.set_playhead_index(i, emit_signal=False)
                 break
 
@@ -127,8 +137,12 @@ class TimelineStrip(QtWidgets.QWidget):
         self._select_feature(feature)
 
     def visible_features(self) -> list:
-        """Return the features currently represented in the strip."""
+        """Return the FreeCAD features currently represented in the strip."""
         return list(getattr(self._body, "Group", []) or [])
+
+    def visible_items(self) -> list:
+        """Return the full timeline item list (features and placement snapshots)."""
+        return self._timeline_scrubber.items()
 
     def eventFilter(self, watched, event) -> bool:
         """Drag/drop and optional horizontal wheel pan on the viewport."""
@@ -162,7 +176,7 @@ class TimelineStrip(QtWidgets.QWidget):
         return super().eventFilter(watched, event)
 
     def _on_playhead_feature_changed(self, position: int) -> None:
-        feats = self.visible_features()
+        items = self.visible_items()
         if position <= 0:
             try:
                 Gui.Selection.clearSelection()
@@ -170,13 +184,28 @@ class TimelineStrip(QtWidgets.QWidget):
                 pass
             return
         card_index = position - 1
-        if 0 <= card_index < len(feats):
-            self._select_feature(feats[card_index])
+        if 0 <= card_index < len(items):
+            item = items[card_index]
+            if item.is_feature:
+                self._select_feature(item.feature)
 
     def _on_playhead_double_clicked(self, index: int) -> None:
-        feats = self.visible_features()
-        if 0 <= index < len(feats):
-            self.featureEditRequested.emit(feats[index])
+        items = self.visible_items()
+        if 0 <= index < len(items):
+            item = items[index]
+            if item.is_feature:
+                self.featureEditRequested.emit(item.feature)
+
+    def _on_item_context_requested(self, index: int, global_pos: QtCore.QPoint) -> None:
+        items = self.visible_items()
+        if not (0 <= index < len(items)):
+            return
+        item = items[index]
+        if item.is_placement:
+            snap = item.snapshot or {}
+            snap_id = str(snap.get("id", ""))
+            if snap_id:
+                self.placementContextRequested.emit(snap_id, global_pos)
 
     def _select_feature(self, feature) -> None:
         if not _feature_is_live(feature):
@@ -198,8 +227,8 @@ class TimelineStrip(QtWidgets.QWidget):
             event.ignore()
             return
 
-        gap_index = self._gap_index_for_event(event, watched)
-        final_index = self._final_index_for_gap(feature, gap_index)
+        item_gap = self._gap_index_for_event(event, watched)
+        final_index = self._final_index_for_gap(feature, item_gap)
         ok, reason = can_move(self._body, feature, final_index)
         if not ok:
             self._hide_drop_indicator()
@@ -207,7 +236,7 @@ class TimelineStrip(QtWidgets.QWidget):
             event.ignore()
             return
 
-        self._show_drop_indicator(gap_index)
+        self._show_drop_indicator(item_gap)
         event.acceptProposedAction()
 
     def _drop(self, event, watched) -> None:
@@ -217,8 +246,8 @@ class TimelineStrip(QtWidgets.QWidget):
             event.ignore()
             return
 
-        gap_index = self._gap_index_for_event(event, watched)
-        final_index = self._final_index_for_gap(feature, gap_index)
+        item_gap = self._gap_index_for_event(event, watched)
+        final_index = self._final_index_for_gap(feature, item_gap)
         try:
             move_feature(self._body, feature, final_index)
         except Exception as exc:
@@ -254,24 +283,29 @@ class TimelineStrip(QtWidgets.QWidget):
         pos = self._map_pos_to_scrubber(watched, _event_pos(event))
         return self._timeline_scrubber.gap_index_at_x(pos.x())
 
-    def _final_index_for_gap(self, feature, gap_index: int) -> int:
+    def _final_index_for_gap(self, feature, item_gap: int) -> int:
+        """Convert an item-space gap index into a Body.Group target index."""
+        items = self.visible_items()
+        feature_gap = item_position_to_feature_gap(items, item_gap)
         features = list(getattr(self._body, "Group", []) or [])
         old_index = next(
             index for index, item in enumerate(features) if item is feature
         )
-        final_index = gap_index - 1 if gap_index > old_index else gap_index
+        final_index = (
+            feature_gap - 1 if feature_gap > old_index else feature_gap
+        )
         return max(0, min(final_index, len(features) - 1))
 
     def _show_drop_indicator(self, gap_index: int) -> None:
-        features = list(getattr(self._body, "Group", []) or [])
+        items = self.visible_items()
         scrub = self._timeline_scrubber
-        if not features:
+        if not items:
             return
 
-        if 0 <= gap_index < len(features):
+        if 0 <= gap_index < len(items):
             x_position = scrub.cell_left_x(gap_index) - 3
         else:
-            x_position = scrub.cell_left_x(len(features) - 1) + THUMB_W + 3
+            x_position = scrub.cell_left_x(len(items) - 1) + THUMB_W + 3
 
         self._drop_indicator.setParent(scrub)
         self._drop_indicator.setGeometry(

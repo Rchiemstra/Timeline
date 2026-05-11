@@ -6,6 +6,7 @@
 import FreeCAD as App
 import FreeCADGui as Gui
 
+from freecad.TipTrack import preferences
 from freecad.TipTrack.body_resolver import (
     get_active_body,
     get_bodies,
@@ -14,14 +15,26 @@ from freecad.TipTrack.body_resolver import (
     safe_object_name,
 )
 from freecad.TipTrack.i18n import translate
+from freecad.TipTrack.placement_history import (
+    BASELINE_SNAPSHOT_LABEL,
+    append_snapshot,
+    find_snapshot,
+    record_baseline_if_missing,
+    remove_snapshot,
+    rename_snapshot,
+    tip_anchor_name,
+)
 from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets
 from freecad.TipTrack.strip import TimelineStrip
 from freecad.TipTrack.tip_controller import (
     apply_scrub_visibility,
+    apply_snapshot_placement,
     capture_body_group_visibility,
+    is_placement_capture_suspended,
     restore_captured_visibility,
-    scrub_tip_to_position,
+    scrub_items_to_position,
     set_tip,
+    suspend_placement_capture,
     toggle_suppression,
 )
 
@@ -41,6 +54,11 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._scrub_depth = 0
         self._scrub_visibility_capture: list = []
         self._scrub_visibility_capture_body = None
+        self._pending_placement_bodies: dict[str, object] = {}
+        self._placement_capture_timer = QtCore.QTimer(self)
+        self._placement_capture_timer.setSingleShot(True)
+        self._placement_capture_timer.timeout.connect(self._flush_placement_captures)
+        self._baseline_bodies: set[str] = set()
 
         self.setAllowedAreas(
             QtCore.Qt.BottomDockWidgetArea | QtCore.Qt.TopDockWidgetArea
@@ -117,6 +135,9 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self.strip.featureRenameCommitted.connect(self.rename_feature)
         self.strip.featureDeleteRequested.connect(self.delete_feature)
         self.strip.featureMoved.connect(self._feature_moved)
+        self.strip.placementContextRequested.connect(
+            self._on_placement_context_requested
+        )
         self.strip._timeline_scrubber.featureChanged.connect(
             self._on_timeline_playhead_position_changed
         )
@@ -196,6 +217,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
             if self._body is not None and not is_live_object(self._body):
                 self._body = None
             self._body = self._resolve_selected_body()
+            self._record_baseline_for_current_body()
             self.strip.set_body(self._body)
 
             if self._body is None:
@@ -214,22 +236,91 @@ class TipTrackDock(QtWidgets.QDockWidget):
         finally:
             self._refresh_depth -= 1
 
+    def _record_baseline_for_current_body(self) -> None:
+        """Ensure the current Body has a baseline placement snapshot (Q2=C)."""
+        body = self._body
+        if body is None or not preferences.get_capture_body_placement():
+            return
+        name = safe_object_name(body)
+        if not name or name in self._baseline_bodies:
+            return
+        try:
+            with suspend_placement_capture():
+                record_baseline_if_missing(body)
+        except Exception as exc:
+            App.Console.PrintWarning(
+                f"TipTrack: failed to record placement baseline: {exc}\n"
+            )
+        self._baseline_bodies.add(name)
+
+    def handle_body_created(self, body) -> None:
+        """Observer hook: record a baseline placement when a new Body appears."""
+        if body is None or not preferences.get_capture_body_placement():
+            return
+        try:
+            with suspend_placement_capture():
+                record_baseline_if_missing(body)
+        except Exception as exc:
+            App.Console.PrintWarning(
+                f"TipTrack: failed to baseline created Body: {exc}\n"
+            )
+        name = safe_object_name(body)
+        if name:
+            self._baseline_bodies.add(name)
+
+    def handle_body_placement_change(self, body) -> None:
+        """Observer hook: schedule a debounced placement snapshot for body."""
+        if body is None or not preferences.get_capture_body_placement():
+            return
+        if is_placement_capture_suspended() or self._scrub_depth:
+            return
+        name = safe_object_name(body)
+        if not name:
+            return
+        self._pending_placement_bodies[name] = body
+        debounce_ms = max(0, preferences.get_placement_capture_debounce_ms())
+        if debounce_ms <= 0:
+            self._flush_placement_captures()
+            return
+        self._placement_capture_timer.start(debounce_ms)
+
+    def _flush_placement_captures(self) -> None:
+        """Append snapshots for every body queued by handle_body_placement_change."""
+        if not self._pending_placement_bodies:
+            return
+        pending = self._pending_placement_bodies
+        self._pending_placement_bodies = {}
+        for _name, body in pending.items():
+            if body is None or not is_live_object(body):
+                continue
+            try:
+                anchor = tip_anchor_name(body)
+                placement = safe_getattr(body, "Placement", None)
+                if placement is None:
+                    continue
+                append_snapshot(body, placement, anchor=anchor)
+            except Exception as exc:
+                App.Console.PrintWarning(
+                    f"TipTrack: failed to record placement snapshot: {exc}\n"
+                )
+        self.refresh()
+
     def set_selected_feature(self, feature) -> None:
         """Synchronize strip highlighting from an external selection."""
         self._set_selected_feature(feature)
 
     def select_adjacent_feature(self, step: int) -> None:
-        """Move keyboard selection left or right in the strip."""
-        features = self.strip.visible_features()
-        if not features:
+        """Move keyboard selection left or right in the strip (one item at a time)."""
+        items = self.strip.visible_items()
+        if not items:
             return
 
         current_pos = self._scrubber.value()
-        next_pos = max(0, min(current_pos + step, len(features)))
+        next_pos = max(0, min(current_pos + step, len(items)))
         self.scrub_to_position(next_pos)
 
     def select_feature_at(self, index: int) -> None:
-        """Select the feature at index in the current strip."""
+        """Select the feature at index in the current strip (feature-space)."""
         features = self.strip.visible_features()
         if not features:
             self._update_navigation_controls()
@@ -240,21 +331,21 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._update_navigation_controls()
 
     def scrub_to_position(self, position: int) -> None:
-        """Move the scrubber to timeline position ``0`` (pre-history) through ``N`` (full tip)."""
-        features = self.strip.visible_features()
-        if self._body is None or not features:
+        """Move the scrubber to item-space position ``0`` (pre-history) through ``N``."""
+        items = self.strip.visible_items()
+        if self._body is None or not items:
             self._update_navigation_controls()
             return
 
-        n = len(features)
+        n = len(items)
         pos = max(0, min(int(position), n))
 
         try:
             self._scrub_depth += 1
             self._ensure_scrub_visibility_capture()
-            tip_target = scrub_tip_to_position(self._body, pos)
-            head = features[pos - 1] if pos > 0 else None
-            self._apply_scrub_visibility(pos, head, tip_target)
+            tip_target, _applied = scrub_items_to_position(self._body, items, pos)
+            head_feature = _latest_feature_in(items, pos)
+            self._apply_scrub_visibility(pos, head_feature, tip_target)
             self._scrub_depth -= 1
 
             self.strip.set_body(self._body, scrub_position=pos)
@@ -265,14 +356,12 @@ class TipTrackDock(QtWidgets.QDockWidget):
                     Gui.Selection.clearSelection()
                 except Exception:
                     pass
-            elif tip_target is None:
-                self._selected_feature = head
-                if head is not None:
-                    self.strip.select_feature(head)
             else:
-                self._selected_feature = head
-                if head is not None:
-                    self.strip.select_feature(head)
+                self._selected_feature = head_feature
+                if head_feature is not None:
+                    self.strip.select_feature(head_feature)
+                else:
+                    self.strip.set_selected_feature(None)
 
             self._set_scrubber_value(pos)
             self._update_navigation_controls()
@@ -282,20 +371,29 @@ class TipTrackDock(QtWidgets.QDockWidget):
             self._show_error("Timeline scrubber", exc)
 
     def scrub_to_index(self, index: int) -> None:
-        """Move the scrubber to feature ``Group[index]`` (slider position ``index + 1``)."""
+        """Move the scrubber to feature ``Group[index]`` (feature-space convenience)."""
+        items = self.strip.visible_items()
         features = self.strip.visible_features()
         if self._body is None or not features:
             self._update_navigation_controls()
             return
 
-        safe_index = max(0, min(index, len(features) - 1))
-        self.scrub_to_position(safe_index + 1)
+        safe_feature_index = max(0, min(index, len(features) - 1))
+        target_position = 0
+        seen = -1
+        for item_index, item in enumerate(items):
+            if item.is_feature:
+                seen += 1
+                if seen == safe_feature_index:
+                    target_position = item_index + 1
+                    break
+        self.scrub_to_position(target_position)
 
     def select_last_feature(self) -> None:
-        """Select the last feature in the current strip."""
-        features = self.strip.visible_features()
-        if features:
-            self.scrub_to_position(len(features))
+        """Select the last item in the current strip."""
+        items = self.strip.visible_items()
+        if items:
+            self.scrub_to_position(len(items))
 
     def set_selected_as_tip(self) -> None:
         """Set the selected feature as the Body tip."""
@@ -389,6 +487,88 @@ class TipTrackDock(QtWidgets.QDockWidget):
         if self._updating_navigation:
             return
         self.scrub_to_position(int(position))
+
+    def _on_placement_context_requested(
+        self, snapshot_id: str, global_pos: QtCore.QPoint
+    ) -> None:
+        """Show a small menu for a placement card: Restore / Rename / Delete."""
+        if self._body is None or not snapshot_id:
+            return
+        snap = find_snapshot(self._body, snapshot_id)
+        if snap is None:
+            return
+
+        menu = QtWidgets.QMenu(self)
+        restore_action = menu.addAction(translate("Restore as current"))
+        rename_action = menu.addAction(translate("Rename"))
+        delete_action = menu.addAction(translate("Delete"))
+        exec_menu = getattr(menu, "exec", None) or menu.exec_
+        action = exec_menu(global_pos)
+        if action is restore_action:
+            self.restore_placement_as_current(snapshot_id)
+        elif action is rename_action:
+            self.rename_placement_via_dialog(snapshot_id)
+        elif action is delete_action:
+            self.delete_placement(snapshot_id)
+
+    def restore_placement_as_current(self, snapshot_id: str) -> None:
+        """Apply a stored snapshot to body.Placement as the current value."""
+        if self._body is None:
+            return
+        snap = find_snapshot(self._body, snapshot_id)
+        if snap is None:
+            return
+        try:
+            apply_snapshot_placement(self._body, snap)
+            self.refresh()
+        except Exception as exc:
+            self._show_error("Restore placement", exc)
+
+    def rename_placement_via_dialog(self, snapshot_id: str) -> None:
+        """Open an inline dialog to rename a placement snapshot."""
+        if self._body is None:
+            return
+        snap = find_snapshot(self._body, snapshot_id)
+        if snap is None:
+            return
+        current = str(snap.get("label") or BASELINE_SNAPSHOT_LABEL)
+        new_label, ok = QtWidgets.QInputDialog.getText(
+            self,
+            translate("Rename placement"),
+            translate("Placement label:"),
+            QtWidgets.QLineEdit.Normal,
+            current,
+        )
+        if not ok:
+            return
+        try:
+            rename_snapshot(self._body, snapshot_id, new_label)
+            self.refresh()
+        except Exception as exc:
+            self._show_error("Rename placement", exc)
+
+    def delete_placement(self, snapshot_id: str) -> None:
+        """Delete a placement snapshot after a confirmation prompt."""
+        if self._body is None:
+            return
+        snap = find_snapshot(self._body, snapshot_id)
+        if snap is None:
+            return
+        label = str(snap.get("label") or BASELINE_SNAPSHOT_LABEL)
+        result = QtWidgets.QMessageBox.question(
+            self,
+            translate("Delete placement"),
+            translate("Delete {label}?").format(label=label),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if result != QtWidgets.QMessageBox.Yes:
+            return
+        try:
+            remove_snapshot(self._body, snapshot_id)
+            self.refresh()
+        except Exception as exc:
+            self._show_error("Delete placement", exc)
 
     def _restore_scrub_visibility_if_needed(self) -> None:
         if self._scrub_visibility_capture:
@@ -531,7 +711,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
 
     def _toggle_playback(self) -> None:
         if self._play_button.isChecked():
-            if not self.strip.visible_features():
+            if not self.strip.visible_items():
                 self._play_button.setChecked(False)
                 return
             self.scrub_to_position(0)
@@ -540,13 +720,13 @@ class TipTrackDock(QtWidgets.QDockWidget):
             self._play_timer.stop()
 
     def _play_next_feature(self) -> None:
-        features = self.strip.visible_features()
-        if not features:
+        items = self.strip.visible_items()
+        if not items:
             self._stop_playback()
             return
 
-        current_pos = self._current_scrub_position(features)
-        n = len(features)
+        current_pos = self._current_scrub_position(items)
+        n = len(items)
         if current_pos >= n:
             self._stop_playback()
             return
@@ -568,22 +748,28 @@ class TipTrackDock(QtWidgets.QDockWidget):
             0,
         )
 
-    def _current_scrub_position(self, features: list | None = None) -> int:
-        features = features if features is not None else self.strip.visible_features()
-        if not features:
+    def _current_scrub_position(self, items: list | None = None) -> int:
+        items = items if items is not None else self.strip.visible_items()
+        if not items:
             return 0
-        n = len(features)
+        n = len(items)
         return max(0, min(self._scrubber.value(), n))
 
     def _sync_scrubber_to_tip(self) -> None:
-        features = self.strip.visible_features()
+        items = self.strip.visible_items()
+        features = [item.feature for item in items if item.is_feature]
         tip = safe_getattr(self._body, "Tip", None)
-        n = len(features)
-        if tip is not None:
-            try:
-                tip_position = features.index(tip) + 1
-            except ValueError:
-                tip_position = 0
+        n = len(items)
+        if tip is not None and tip in features:
+            tip_feature_index = features.index(tip)
+            tip_position = 0
+            seen = -1
+            for item_index, item in enumerate(items):
+                if item.is_feature:
+                    seen += 1
+                    if seen == tip_feature_index:
+                        tip_position = item_index + 1
+                        break
             if tip_position > 0:
                 self._restore_scrub_visibility_if_needed()
         else:
@@ -598,14 +784,14 @@ class TipTrackDock(QtWidgets.QDockWidget):
             self._updating_navigation = False
 
     def _update_navigation_controls(self) -> None:
-        features = self.strip.visible_features()
-        has_features = bool(features)
-        max_pos = len(features)
-        current_pos = self._current_scrub_position(features) if has_features else 0
+        items = self.strip.visible_items()
+        has_items = bool(items)
+        max_pos = len(items)
+        current_pos = self._current_scrub_position(items) if has_items else 0
 
         self._updating_navigation = True
         try:
-            self._scrubber.setEnabled(has_features)
+            self._scrubber.setEnabled(has_items)
             self._scrubber.setRange(0, max(0, max_pos))
             self._scrubber.setValue(current_pos)
         finally:
@@ -613,12 +799,12 @@ class TipTrackDock(QtWidgets.QDockWidget):
 
         at_first = current_pos <= 0
         at_last = current_pos >= max_pos
-        self._first_button.setEnabled(has_features and not at_first)
-        self._previous_button.setEnabled(has_features and not at_first)
-        self._next_button.setEnabled(has_features and not at_last)
-        self._last_button.setEnabled(has_features and not at_last)
-        self._play_button.setEnabled(has_features)
-        if not has_features or at_last:
+        self._first_button.setEnabled(has_items and not at_first)
+        self._previous_button.setEnabled(has_items and not at_first)
+        self._next_button.setEnabled(has_items and not at_last)
+        self._last_button.setEnabled(has_items and not at_last)
+        self._play_button.setEnabled(has_items)
+        if not has_items or at_last:
             self._stop_playback()
 
         self._sync_strip_scrub_visual()
@@ -631,3 +817,12 @@ class TipTrackDock(QtWidgets.QDockWidget):
 
 def _standard_pixmap(name: str):
     return getattr(QtWidgets.QStyle, name, QtWidgets.QStyle.SP_ArrowRight)
+
+
+def _latest_feature_in(items, position: int):
+    """Return the latest FreeCAD feature card in items[:position], or None."""
+    last = None
+    for item in items[:position]:
+        if item.is_feature:
+            last = item.feature
+    return last

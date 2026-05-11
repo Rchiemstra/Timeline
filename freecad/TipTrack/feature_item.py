@@ -29,6 +29,55 @@ def _fallback_icon() -> QtGui.QIcon:
     return style.standardIcon(QtWidgets.QStyle.SP_FileDialogDetailedView)
 
 
+def _build_placement_icon() -> QtGui.QIcon:
+    """Draw a four-directional arrow glyph to identify placement timeline cards."""
+    size = 32
+    pixmap = QtGui.QPixmap(size, size)
+    pixmap.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    pen = QtGui.QPen(QtGui.QColor(60, 130, 200))
+    pen.setWidth(2)
+    painter.setPen(pen)
+    painter.setBrush(QtGui.QBrush(QtGui.QColor(60, 130, 200)))
+
+    cx = cy = size // 2
+    arm = size // 2 - 4
+    head = 4
+    painter.drawLine(cx - arm, cy, cx + arm, cy)
+    painter.drawLine(cx, cy - arm, cx, cy + arm)
+
+    arrows = [
+        (cx + arm, cy, cx + arm - head, cy - head, cx + arm - head, cy + head),
+        (cx - arm, cy, cx - arm + head, cy - head, cx - arm + head, cy + head),
+        (cx, cy - arm, cx - head, cy - arm + head, cx + head, cy - arm + head),
+        (cx, cy + arm, cx - head, cy + arm - head, cx + head, cy + arm - head),
+    ]
+    for tip_x, tip_y, lx, ly, rx, ry in arrows:
+        painter.drawPolygon(
+            QtGui.QPolygon(
+                [
+                    QtCore.QPoint(tip_x, tip_y),
+                    QtCore.QPoint(lx, ly),
+                    QtCore.QPoint(rx, ry),
+                ]
+            )
+        )
+    painter.end()
+    return QtGui.QIcon(pixmap)
+
+
+_PLACEMENT_ICON_CACHE: QtGui.QIcon | None = None
+
+
+def placement_icon() -> QtGui.QIcon:
+    """Return a shared QIcon used by placement-snapshot timeline cards."""
+    global _PLACEMENT_ICON_CACHE
+    if _PLACEMENT_ICON_CACHE is None:
+        _PLACEMENT_ICON_CACHE = _build_placement_icon()
+    return _PLACEMENT_ICON_CACHE
+
+
 def _icon_from_freecad(value: str) -> QtGui.QIcon | None:
     get_icon = getattr(Gui, "getIcon", None)
     if get_icon is None:

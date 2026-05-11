@@ -3,9 +3,36 @@
 
 """Small wrappers around FreeCAD mutations that affect Body history."""
 
+from contextlib import contextmanager
+
 import FreeCAD as App
 
 from freecad.TipTrack.body_resolver import safe_getattr
+from freecad.TipTrack.placement_history import (
+    KIND_FEATURE,
+    KIND_PLACEMENT,
+    TimelineItem,
+)
+
+# Re-entrancy guard for the observer: bumped while TipTrack itself is writing
+# body.Placement so the observer can skip its own scrub-induced changes.
+_placement_capture_suspended = 0
+
+
+def is_placement_capture_suspended() -> bool:
+    """True while TipTrack is actively writing body.Placement (do not capture)."""
+    return _placement_capture_suspended > 0
+
+
+@contextmanager
+def suspend_placement_capture():
+    """Context manager bracketing mutations that must not trigger snapshots."""
+    global _placement_capture_suspended
+    _placement_capture_suspended += 1
+    try:
+        yield
+    finally:
+        _placement_capture_suspended = max(0, _placement_capture_suspended - 1)
 
 
 def _document_for(obj):
@@ -167,3 +194,119 @@ def toggle_suppression(feature) -> bool:
     feature.Suppressed = not bool(feature.Suppressed)
     _recompute(feature)
     return bool(feature.Suppressed)
+
+
+def build_placement_from_snapshot(snapshot: dict):
+    """Construct a FreeCAD ``Placement`` from a stored snapshot dict.
+
+    Returns ``None`` when the running FreeCAD build does not expose
+    ``Vector``/``Rotation``/``Placement`` (e.g. headless tests without the
+    real ``FreeCAD`` module).
+    """
+    if not snapshot:
+        return None
+    base = snapshot.get("base") or [0.0, 0.0, 0.0]
+    rot = snapshot.get("rot") or [0.0, 0.0, 1.0, 0.0]
+
+    vector_factory = getattr(App, "Vector", None)
+    rotation_factory = getattr(App, "Rotation", None)
+    placement_factory = getattr(App, "Placement", None)
+    if vector_factory is None or rotation_factory is None or placement_factory is None:
+        return None
+
+    try:
+        base_vec = vector_factory(float(base[0]), float(base[1]), float(base[2]))
+        axis_vec = vector_factory(float(rot[0]), float(rot[1]), float(rot[2]))
+        rotation = rotation_factory(axis_vec, float(rot[3]))
+        return placement_factory(base_vec, rotation)
+    except Exception:
+        return None
+
+
+def apply_snapshot_placement(body, snapshot: dict) -> bool:
+    """Assign body.Placement from snapshot inside a capture-suspend scope.
+
+    Returns ``True`` when ``body.Placement`` was assigned, ``False`` otherwise
+    (e.g. body has no ``Placement``, the snapshot is empty, or FreeCAD's
+    placement factories are unavailable in the current environment).
+    """
+    if body is None or not snapshot or not hasattr(body, "Placement"):
+        return False
+    placement = build_placement_from_snapshot(snapshot)
+    if placement is None:
+        return False
+    with suspend_placement_capture():
+        body.Placement = placement
+    return True
+
+
+def _latest_of_kind(items: list, position: int, kind: str):
+    last = None
+    for item in items[:position]:
+        if item.kind == kind:
+            last = item
+    return last
+
+
+def _latest_feature_item_safe_tip(items: list, position: int):
+    """Return the latest feature item in items[:position] that can be a Tip."""
+    last = None
+    for item in items[:position]:
+        if item.kind == KIND_FEATURE and can_be_tip(item.feature):
+            last = item
+    return last
+
+
+def scrub_items_to_position(body, items, position: int) -> tuple:
+    """Roll body to a unified-timeline slider position.
+
+    The unified timeline interleaves PartDesign features with placement
+    snapshots (see :mod:`freecad.TipTrack.placement_history`). For each
+    slider position, the Body tip is set to the nearest preceding safe
+    PartDesign feature, and the Body placement is set to the nearest
+    preceding placement snapshot (if any).
+
+    Returns ``(tip_target, applied_snapshot)``: either may be ``None``.
+    Position ``0`` clears the tip and restores the earliest placement
+    snapshot (the baseline) so the timeline's pre-history matches the
+    Body's original placement.
+    """
+    if body is None:
+        raise ValueError("Cannot scrub without an active Body.")
+
+    items = list(items or [])
+    n = len(items)
+    pos = max(0, min(int(position), n))
+
+    if pos == 0:
+        with suspend_placement_capture():
+            body.Tip = None
+        baseline_item = next(
+            (item for item in items if item.kind == KIND_PLACEMENT), None
+        )
+        applied = None
+        if baseline_item is not None:
+            if apply_snapshot_placement(body, baseline_item.snapshot):
+                applied = baseline_item.snapshot
+        _recompute(body)
+        return (None, applied)
+
+    tip_item = _latest_feature_item_safe_tip(items, pos)
+    tip_target = tip_item.feature if tip_item is not None else None
+    placement_item = _latest_of_kind(items, pos, KIND_PLACEMENT)
+    applied_snapshot = placement_item.snapshot if placement_item is not None else None
+
+    with suspend_placement_capture():
+        body.Tip = tip_target
+    if applied_snapshot is not None:
+        apply_snapshot_placement(body, applied_snapshot)
+    _recompute(body)
+    return (tip_target, applied_snapshot)
+
+
+def head_item_at_position(items: list, position: int) -> TimelineItem | None:
+    """Return the item directly under the playhead for unified slider position."""
+    if position <= 0 or not items:
+        return None
+    safe = max(0, min(int(position), len(items)))
+    return items[safe - 1]

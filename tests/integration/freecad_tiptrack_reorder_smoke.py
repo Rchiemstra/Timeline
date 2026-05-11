@@ -206,7 +206,7 @@ def screenshot(main_window, doc, body, dock: TipTrackDock, name: str) -> str:
     log(
         f"screenshot dock={dock.width()}x{dock.height()} "
         f"scrubber={scrubber.width()}x{scrubber.height()} "
-        f"features={len(scrubber._features)}"
+        f"items={len(scrubber.items())}"
     )
 
     def _unlink_tmp() -> None:

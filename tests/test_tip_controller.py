@@ -281,3 +281,213 @@ def test_scrub_tip_to_index_updates_tip_and_recomputes(mock_freecad):
     assert scrub_tip_to_index(body, 1) is pad
     assert body.Tip is pad
     assert document.recompute_count == 2
+
+
+def _install_placement_factory(app):
+    """Install minimal Vector/Rotation/Placement factories on the FreeCAD stub."""
+
+    class _Vector:
+        def __init__(self, x=0.0, y=0.0, z=0.0):
+            self.x, self.y, self.z = float(x), float(y), float(z)
+
+        def __eq__(self, other):
+            return (
+                isinstance(other, _Vector)
+                and (self.x, self.y, self.z) == (other.x, other.y, other.z)
+            )
+
+    class _Rotation:
+        def __init__(self, axis, angle):
+            self.Axis = axis
+            self.Angle = float(angle)
+
+    class _Placement:
+        def __init__(self, base, rotation):
+            self.Base = base
+            self.Rotation = rotation
+
+    app.Vector = _Vector
+    app.Rotation = _Rotation
+    app.Placement = _Placement
+
+
+def test_suspend_placement_capture_increments_guard(mock_freecad):
+    """Entering the context manager flips the suspension flag for observers."""
+    from freecad.TipTrack.tip_controller import (
+        is_placement_capture_suspended,
+        suspend_placement_capture,
+    )
+
+    assert is_placement_capture_suspended() is False
+    with suspend_placement_capture():
+        assert is_placement_capture_suspended() is True
+        with suspend_placement_capture():
+            assert is_placement_capture_suspended() is True
+        assert is_placement_capture_suspended() is True
+    assert is_placement_capture_suspended() is False
+
+
+def test_apply_snapshot_placement_writes_body_placement(mock_freecad):
+    """apply_snapshot_placement assigns body.Placement and returns True on success."""
+    app, _gui = mock_freecad
+    _install_placement_factory(app)
+
+    document = _Document()
+    body = SimpleNamespace(Placement=None, Tip=None, Document=document)
+
+    from freecad.TipTrack.tip_controller import apply_snapshot_placement
+
+    ok = apply_snapshot_placement(
+        body,
+        {"base": [1.0, 2.0, 3.0], "rot": [0.0, 0.0, 1.0, 90.0]},
+    )
+    assert ok is True
+    assert body.Placement is not None
+    assert (body.Placement.Base.x, body.Placement.Base.y, body.Placement.Base.z) == (
+        1.0,
+        2.0,
+        3.0,
+    )
+    assert body.Placement.Rotation.Angle == 90.0
+
+
+def test_apply_snapshot_placement_returns_false_without_factories(mock_freecad):
+    """No FreeCAD placement factories means apply silently returns False."""
+    app, _gui = mock_freecad
+    for attr in ("Vector", "Rotation", "Placement"):
+        if hasattr(app, attr):
+            delattr(app, attr)
+
+    document = _Document()
+    body = SimpleNamespace(Placement=None, Document=document)
+
+    from freecad.TipTrack.tip_controller import apply_snapshot_placement
+
+    assert apply_snapshot_placement(body, {"base": [0, 0, 0], "rot": [0, 0, 1, 0]}) is False
+
+
+def test_apply_snapshot_placement_suspends_capture_during_write(mock_freecad):
+    """While apply runs, observers see is_placement_capture_suspended() == True."""
+    app, _gui = mock_freecad
+    _install_placement_factory(app)
+
+    document = _Document()
+    saw_suspended: dict[str, bool] = {"value": False}
+
+    class _Body:
+        def __init__(self):
+            self.Placement = None
+            self.Document = document
+
+        def __setattr__(self, name, value):
+            if name == "Placement":
+                from freecad.TipTrack.tip_controller import is_placement_capture_suspended
+
+                saw_suspended["value"] = is_placement_capture_suspended()
+            object.__setattr__(self, name, value)
+
+    body = _Body()
+    from freecad.TipTrack.tip_controller import apply_snapshot_placement
+
+    apply_snapshot_placement(body, {"base": [0, 0, 0], "rot": [0, 0, 1, 0]})
+    assert saw_suspended["value"] is True
+
+
+def test_scrub_items_to_position_zero_restores_baseline_and_clears_tip(mock_freecad):
+    """Position 0 clears Tip and reapplies the earliest placement snapshot."""
+    app, _gui = mock_freecad
+    _install_placement_factory(app)
+
+    document = _Document()
+    sketch = SimpleNamespace(Name="Sketch", TypeId="Sketcher::SketchObject")
+    pad = SimpleNamespace(Name="Pad", TypeId="PartDesign::Pad")
+    body = SimpleNamespace(
+        Group=[sketch, pad],
+        Tip=pad,
+        Placement=None,
+        Document=document,
+    )
+
+    from freecad.TipTrack.placement_history import TimelineItem
+    from freecad.TipTrack.tip_controller import scrub_items_to_position
+
+    baseline = {"id": "x", "anchor": "", "base": [0, 0, 0], "rot": [0, 0, 1, 0]}
+    items = [
+        TimelineItem.for_snapshot(baseline),
+        TimelineItem.for_feature(sketch),
+        TimelineItem.for_feature(pad),
+    ]
+
+    tip_target, applied = scrub_items_to_position(body, items, 0)
+    assert tip_target is None
+    assert applied is baseline
+    assert body.Tip is None
+    assert body.Placement is not None
+    assert document.recompute_count == 1
+
+
+def test_scrub_items_to_position_applies_latest_preceding_snapshot(mock_freecad):
+    """Scrubbing past a placement card applies that placement and the latest valid tip."""
+    app, _gui = mock_freecad
+    _install_placement_factory(app)
+
+    document = _Document()
+    sketch = SimpleNamespace(Name="Sketch", TypeId="Sketcher::SketchObject")
+    pad = SimpleNamespace(Name="Pad", TypeId="PartDesign::Pad")
+    pocket = SimpleNamespace(Name="Pocket", TypeId="PartDesign::Pocket")
+    body = SimpleNamespace(
+        Group=[sketch, pad, pocket],
+        Tip=None,
+        Placement=None,
+        Document=document,
+    )
+
+    from freecad.TipTrack.placement_history import TimelineItem
+    from freecad.TipTrack.tip_controller import scrub_items_to_position
+
+    snap_after_pad = {
+        "id": "p1",
+        "anchor": "Pad",
+        "base": [10.0, 0.0, 0.0],
+        "rot": [0, 0, 1, 0],
+    }
+    items = [
+        TimelineItem.for_feature(sketch),
+        TimelineItem.for_feature(pad),
+        TimelineItem.for_snapshot(snap_after_pad),
+        TimelineItem.for_feature(pocket),
+    ]
+
+    # Position 3 = right after the placement card; tip should be Pad,
+    # placement should be snap_after_pad.
+    tip_target, applied = scrub_items_to_position(body, items, 3)
+    assert tip_target is pad
+    assert applied is snap_after_pad
+    assert body.Tip is pad
+    assert body.Placement is not None
+    assert body.Placement.Base.x == 10.0
+
+
+def test_scrub_items_to_position_without_placements_behaves_like_legacy(mock_freecad):
+    """When no placement snapshots exist, scrub still updates Tip correctly."""
+    document = _Document()
+    sketch = SimpleNamespace(Name="Sketch", TypeId="Sketcher::SketchObject")
+    pad = SimpleNamespace(Name="Pad", TypeId="PartDesign::Pad")
+    body = SimpleNamespace(
+        Group=[sketch, pad],
+        Tip=None,
+        Placement=None,
+        Document=document,
+    )
+
+    from freecad.TipTrack.placement_history import TimelineItem
+    from freecad.TipTrack.tip_controller import scrub_items_to_position
+
+    items = [
+        TimelineItem.for_feature(sketch),
+        TimelineItem.for_feature(pad),
+    ]
+    tip_target, applied = scrub_items_to_position(body, items, 2)
+    assert tip_target is pad
+    assert applied is None
+    assert body.Tip is pad

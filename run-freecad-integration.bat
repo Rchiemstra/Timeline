@@ -32,6 +32,13 @@ del /q "%ARTIFACTS%\tiptrack_integration_failure.txt" 2>nul
 del /q "%ARTIFACTS%\tiptrack_reorder.FCStd" 2>nul
 del /q "%ARTIFACTS%\tiptrack_reorder_summary.json" 2>nul
 del /q "%ARTIFACTS%\tiptrack_reorder_failure.txt" 2>nul
+del /q "%ARTIFACTS%\freecad_tiptrack_placement_frame_*.png" 2>nul
+del /q "%ARTIFACTS%\tiptrack_placement.FCStd" 2>nul
+del /q "%ARTIFACTS%\tiptrack_placement.*.FCBak" 2>nul
+del /q "%ARTIFACTS%\tiptrack_placement_summary.json" 2>nul
+del /q "%ARTIFACTS%\tiptrack_placement_failure.txt" 2>nul
+del /q "%ARTIFACTS%\freecad-tiptrack-placement.mp4" 2>nul
+del /q "%ARTIFACTS%\freecad-tiptrack-placement.gif" 2>nul
 
 echo Running FreeCAD Docker GUI smoke test...
 docker run --rm ^
@@ -118,6 +125,51 @@ ffmpeg -y -framerate 1 -i "%ARTIFACTS%\record_frame_%%02d.png" -vf "fps=10,scale
 if errorlevel 1 exit /b 1
 
 ffmpeg -y -framerate 1 -i "%ARTIFACTS%\record_frame_%%02d.png" -vf "fps=5,scale=960:-2:flags=lanczos" "%ARTIFACTS%\freecad-tiptrack-reorder.gif"
+if errorlevel 1 exit /b 1
+
+del /q "%ARTIFACTS%\record_frame_*.png" 2>nul
+
+rem --- PLACEMENT TEST ---
+echo.
+echo Running FreeCAD Docker placement smoke test...
+docker run --rm ^
+  -v "%CD%:/work" ^
+  -w /work ^
+  --entrypoint /bin/bash ^
+  %IMAGE% ^
+  -lc "TIPTRACK_REPO_ROOT=/work TIPTRACK_ARTIFACT_DIR=/work/artifacts timeout 120s xvfb-run -a /opt/freecad/usr/bin/freecad /work/tests/integration/freecad_tiptrack_placement_smoke.py"
+
+if errorlevel 1 (
+    echo.
+    echo ERROR: FreeCAD placement integration test failed.
+    if exist "%ARTIFACTS%\tiptrack_placement_failure.txt" (
+        echo Failure details:
+        type "%ARTIFACTS%\tiptrack_placement_failure.txt"
+    )
+    exit /b 1
+)
+
+if exist "%ARTIFACTS%\tiptrack_placement_summary.json" (
+    echo.
+    echo Placement test summary:
+    type "%ARTIFACTS%\tiptrack_placement_summary.json"
+)
+
+where ffmpeg >nul 2>nul
+if errorlevel 1 goto :done
+
+echo.
+echo Building placement recording artifacts with ffmpeg...
+copy /y "%ARTIFACTS%\freecad_tiptrack_placement_frame_00_baseline.png" "%ARTIFACTS%\record_frame_00.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_placement_frame_01_first_move.png" "%ARTIFACTS%\record_frame_01.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_placement_frame_02_second_move.png" "%ARTIFACTS%\record_frame_02.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_placement_frame_03_scrub_baseline.png" "%ARTIFACTS%\record_frame_03.png" >nul
+copy /y "%ARTIFACTS%\freecad_tiptrack_placement_frame_04_scrub_final.png" "%ARTIFACTS%\record_frame_04.png" >nul
+
+ffmpeg -y -framerate 1 -i "%ARTIFACTS%\record_frame_%%02d.png" -vf "fps=10,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p" "%ARTIFACTS%\freecad-tiptrack-placement.mp4"
+if errorlevel 1 exit /b 1
+
+ffmpeg -y -framerate 1 -i "%ARTIFACTS%\record_frame_%%02d.png" -vf "fps=5,scale=960:-2:flags=lanczos" "%ARTIFACTS%\freecad-tiptrack-placement.gif"
 if errorlevel 1 exit /b 1
 
 del /q "%ARTIFACTS%\record_frame_*.png" 2>nul

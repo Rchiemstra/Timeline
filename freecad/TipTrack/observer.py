@@ -13,6 +13,7 @@ from freecad.TipTrack.body_resolver import body_contains, get_active_body, is_bo
 _DocumentObserver = getattr(App, "DocumentObserver", object) if App else object
 
 _REFRESH_PROPERTIES = {"Group", "Tip", "Label", "Visibility"}
+_PLACEMENT_PROPERTY = "Placement"
 
 
 class TipTrackObserver(_DocumentObserver):
@@ -24,11 +25,16 @@ class TipTrackObserver(_DocumentObserver):
 
     def slotChangedObject(self, obj, prop) -> None:
         """Handle changes to document objects."""
+        if prop == _PLACEMENT_PROPERTY and is_body(obj):
+            self._handle_body_placement_change(obj)
+            return
         if prop in _REFRESH_PROPERTIES and self._affects_current_body(obj):
             self._refresh()
 
     def slotCreatedObject(self, obj) -> None:
         """Handle object creation."""
+        if is_body(obj):
+            self._handle_body_created(obj)
         if is_body(obj) or self._affects_current_body(obj):
             self._refresh()
 
@@ -63,6 +69,26 @@ class TipTrackObserver(_DocumentObserver):
         refresh = getattr(self.dock, "refresh", None)
         if refresh is not None:
             refresh()
+
+    def _handle_body_placement_change(self, body) -> None:
+        """Forward a body.Placement change to the dock for snapshot capture."""
+        handler = getattr(self.dock, "handle_body_placement_change", None)
+        if handler is None:
+            return
+        try:
+            handler(body)
+        except Exception:
+            return
+
+    def _handle_body_created(self, body) -> None:
+        """Forward a new-body event so the dock can record its baseline placement."""
+        handler = getattr(self.dock, "handle_body_created", None)
+        if handler is None:
+            return
+        try:
+            handler(body)
+        except Exception:
+            return
 
     def _affects_current_body(self, obj) -> bool:
         body = getattr(self.dock, "body", None) or get_active_body()

@@ -5,6 +5,17 @@
 
 ## Unreleased
 
+- Added Body Placement capture: when the active Body's ``Placement`` changes,
+  TipTrack records a snapshot and renders it as a dedicated card on the
+  timeline, interleaved chronologically with feature cards. Scrubbing onto a
+  placement card re-applies that stored placement and rolls the tip back to
+  the anchor feature; position ``0`` restores the original baseline placement.
+  A baseline snapshot is recorded automatically the first time TipTrack sees a
+  Body (controlled by the new ``Capture Body moves on timeline`` preference,
+  default on). Snapshots persist on the Body as a hidden
+  ``Group_TipTrackPlacements`` JSON property. Right-clicking a placement card
+  offers Restore-as-current / Rename / Delete; placement cards are not
+  drag-reorderable.
 - Added pre-history timeline position ``0`` (``Body.Tip`` cleared, viewport
   geometry hidden with visibility restored when leaving), slider range
   ``0..N``, and position-based scrubbing via ``scrub_tip_to_position``. Feature
