@@ -476,6 +476,12 @@ def main() -> None:
         raise AssertionError("Pre-history should clear timeline selection")
     if body.ViewObject.Visibility:
         raise AssertionError("Pre-history should hide the Body in the 3D view")
+    for feat in body.Group:
+        vo = getattr(feat, "ViewObject", None)
+        if vo is not None and getattr(vo, "Visibility", False):
+            raise AssertionError(
+                f"Pre-history should hide all Body.Group features; {feat.Name} is still visible"
+            )
     assert_playhead_prehistory(dock, "pre-history")
     log("step 14 pre-history: tip cleared, geometry hidden, playhead left of first card")
     frames.append(
@@ -497,6 +503,19 @@ def main() -> None:
         raise AssertionError("Scrub to first sketch should leave Body.Tip unset")
     if dock._selected_feature is not sketch:
         raise AssertionError("Scrubber selection did not sync to BaseSketch")
+    if body.ViewObject.Visibility:
+        raise AssertionError("Body should stay hidden at sketch-only scrub")
+    sk_vo = getattr(sketch, "ViewObject", None)
+    if sk_vo is None or not sk_vo.Visibility:
+        raise AssertionError("BaseSketch should be visible at slider position 1")
+    for feat in body.Group:
+        if feat is sketch:
+            continue
+        vo = getattr(feat, "ViewObject", None)
+        if vo is not None and getattr(vo, "Visibility", False):
+            raise AssertionError(
+                f"Sketch-only scrub should hide {feat.Name} in the 3D view"
+            )
     assert_playhead_right_of_card(dock, 0, "BaseSketch")
     log("step 15b scrub to BasePad (position 2)")
     dock._scrubber.setValue(2)
@@ -507,6 +526,8 @@ def main() -> None:
         raise AssertionError("Solid volume at BasePad tip does not match Pad shape")
     assert_playhead_right_of_card(dock, 1, "BasePad")
     log("step 16 BasePad solid restored; playhead right of BasePad OK")
+    if not body.ViewObject.Visibility:
+        raise AssertionError("Body should be visible again with a solid PartDesign tip")
     frames.append(
         screenshot(
             main_window, doc, body, dock, "freecad_tiptrack_frame_02_scrub_pad.png"

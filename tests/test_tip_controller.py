@@ -110,6 +110,52 @@ def test_scrub_tip_to_position_two_restores_pad(mock_freecad):
     assert document.recompute_count == 1
 
 
+def test_hide_body_and_all_group_features_marks_invisible(mock_freecad):
+    """hide_body_and_all_group_features turns off Body and every Group ViewObject."""
+    vo_b = SimpleNamespace(Visibility=True)
+    vo_a = SimpleNamespace(Visibility=True)
+    vo_b_feat = SimpleNamespace(Visibility=True)
+    a = SimpleNamespace(Name="A", ViewObject=vo_a)
+    b = SimpleNamespace(Name="B", ViewObject=vo_b_feat)
+    body = SimpleNamespace(Name="Body", Group=[a, b], ViewObject=vo_b)
+
+    from freecad.TipTrack.tip_controller import hide_body_and_all_group_features
+
+    hide_body_and_all_group_features(body)
+    assert vo_b.Visibility is False
+    assert vo_a.Visibility is False
+    assert vo_b_feat.Visibility is False
+
+
+def test_sketch_only_visibility_pattern(mock_freecad):
+    """Sketch-only view: hide body and group, then show only the head feature."""
+    vo_body = SimpleNamespace(Visibility=True)
+    vo_sk = SimpleNamespace(Visibility=True)
+    vo_pad = SimpleNamespace(Visibility=True)
+    sketch = SimpleNamespace(Name="Sketch", ViewObject=vo_sk)
+    pad = SimpleNamespace(Name="Pad", ViewObject=vo_pad)
+    body = SimpleNamespace(Group=[sketch, pad], ViewObject=vo_body)
+
+    from freecad.TipTrack.tip_controller import (
+        capture_body_group_visibility,
+        hide_captured_viewobjects,
+        restore_captured_visibility,
+        set_viewobject_visibility,
+    )
+
+    cap = capture_body_group_visibility(body)
+    hide_captured_viewobjects(cap)
+    set_viewobject_visibility(sketch, True)
+    assert vo_body.Visibility is False
+    assert vo_sk.Visibility is True
+    assert vo_pad.Visibility is False
+
+    restore_captured_visibility(cap)
+    assert vo_body.Visibility is True
+    assert vo_sk.Visibility is True
+    assert vo_pad.Visibility is True
+
+
 def test_visibility_capture_hide_restore_preserves_values(mock_freecad):
     """Pre-history hide/restore round-trips Body and feature visibility flags."""
     document = _Document()

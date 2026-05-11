@@ -113,6 +113,23 @@ def restore_captured_visibility(capture) -> None:
             vo.Visibility = vis
 
 
+def hide_body_and_all_group_features(body) -> None:
+    """Set ``ViewObject.Visibility`` False on the Body and every object in ``Body.Group``."""
+    if body is None:
+        return
+    for obj in [body] + list(getattr(body, "Group", []) or []):
+        vo = getattr(obj, "ViewObject", None)
+        if vo is not None and hasattr(vo, "Visibility"):
+            vo.Visibility = False
+
+
+def set_viewobject_visibility(obj, visible: bool) -> None:
+    """Assign ``ViewObject.Visibility`` when the object exposes a ViewObject."""
+    vo = getattr(obj, "ViewObject", None)
+    if vo is not None and hasattr(vo, "Visibility"):
+        vo.Visibility = bool(visible)
+
+
 def toggle_suppression(feature) -> bool:
     """Toggle feature.Suppressed and recompute, returning the new value."""
     if not hasattr(feature, "Suppressed"):

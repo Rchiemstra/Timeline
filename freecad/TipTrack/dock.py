@@ -22,6 +22,7 @@ from freecad.TipTrack.tip_controller import (
     restore_captured_visibility,
     scrub_tip_to_position,
     set_tip,
+    set_viewobject_visibility,
     toggle_suppression,
 )
 
@@ -38,8 +39,8 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._refreshing_selector = False
         self._updating_navigation = False
         self._refresh_depth = 0
-        self._prehistory_visibility_capture: list = []
-        self._prehistory_capture_body = None
+        self._scrub_visibility_capture: list = []
+        self._scrub_visibility_capture_body = None
 
         self.setAllowedAreas(
             QtCore.Qt.BottomDockWidgetArea | QtCore.Qt.TopDockWidgetArea
@@ -196,12 +197,15 @@ class TipTrackDock(QtWidgets.QDockWidget):
             self.strip.set_body(self._body)
 
             if self._body is None:
-                self._restore_prehistory_visibility_if_needed()
+                self._restore_scrub_visibility_if_needed()
                 self._selected_feature = None
                 self._update_navigation_controls()
                 return
 
-            self._selected_feature = safe_getattr(self._body, "Tip", None)
+            tip = safe_getattr(self._body, "Tip", None)
+            self._selected_feature = tip
+            if tip is not None:
+                self._restore_scrub_visibility_if_needed()
             self.strip.set_selected_feature(self._selected_feature)
             self._sync_scrubber_to_tip()
             self._update_navigation_controls()
@@ -243,30 +247,38 @@ class TipTrackDock(QtWidgets.QDockWidget):
         n = len(features)
         pos = max(0, min(int(position), n))
 
-        if pos > 0:
-            self._restore_prehistory_visibility_if_needed()
-
         try:
-            scrub_tip_to_position(self._body, pos)
-            if pos == 0:
-                self._selected_feature = None
+            tip_target = scrub_tip_to_position(self._body, pos)
+            head = features[pos - 1] if pos > 0 else None
+            non_solid = pos == 0 or tip_target is None
+
+            if non_solid:
+                self._ensure_scrub_visibility_capture()
+                self._apply_non_solid_scrub_visibility(pos, head)
             else:
-                self._selected_feature = features[pos - 1]
+                self._restore_scrub_visibility_if_needed()
+
             self.strip.set_body(self._body, scrub_position=pos)
             if pos == 0:
+                self._selected_feature = None
                 self.strip.set_selected_feature(None)
                 try:
                     Gui.Selection.clearSelection()
                 except Exception:
                     pass
-                # Apply after tip clear + recompute: FreeCAD may re-show the Body during recompute.
-                self._apply_prehistory_viewport_hide()
+            elif tip_target is None:
+                self._selected_feature = head
+                if head is not None:
+                    self.strip.select_feature(head)
             else:
-                self.strip.select_feature(self._selected_feature)
+                self._selected_feature = head
+                if head is not None:
+                    self.strip.select_feature(head)
+
             self._set_scrubber_value(pos)
             self._update_navigation_controls()
         except Exception as exc:
-            self._restore_prehistory_visibility_if_needed()
+            self._restore_scrub_visibility_if_needed()
             self._show_error("Timeline scrubber", exc)
 
     def scrub_to_index(self, index: int) -> None:
@@ -377,24 +389,29 @@ class TipTrackDock(QtWidgets.QDockWidget):
             return
         self.scrub_to_position(int(position))
 
-    def _restore_prehistory_visibility_if_needed(self) -> None:
-        if self._prehistory_visibility_capture:
-            restore_captured_visibility(self._prehistory_visibility_capture)
-        self._prehistory_visibility_capture = []
-        self._prehistory_capture_body = None
+    def _restore_scrub_visibility_if_needed(self) -> None:
+        if self._scrub_visibility_capture:
+            restore_captured_visibility(self._scrub_visibility_capture)
+        self._scrub_visibility_capture = []
+        self._scrub_visibility_capture_body = None
 
-    def _apply_prehistory_viewport_hide(self) -> None:
+    def _ensure_scrub_visibility_capture(self) -> None:
         body = self._body
         if body is None:
             return
-        if self._prehistory_capture_body is body and self._prehistory_visibility_capture:
-            hide_captured_viewobjects(self._prehistory_visibility_capture)
+        if self._scrub_visibility_capture_body is body and self._scrub_visibility_capture:
             return
-        self._restore_prehistory_visibility_if_needed()
-        capture = capture_body_group_visibility(body)
-        self._prehistory_visibility_capture = capture
-        self._prehistory_capture_body = body
-        hide_captured_viewobjects(capture)
+        self._restore_scrub_visibility_if_needed()
+        self._scrub_visibility_capture = capture_body_group_visibility(body)
+        self._scrub_visibility_capture_body = body
+
+    def _apply_non_solid_scrub_visibility(self, pos: int, head_feature) -> None:
+        """Hide Body and all Group objects; at sketch-only positions show *head_feature* only."""
+        if not self._scrub_visibility_capture:
+            return
+        hide_captured_viewobjects(self._scrub_visibility_capture)
+        if pos > 0 and head_feature is not None:
+            set_viewobject_visibility(head_feature, True)
 
     def _set_selected_feature(self, feature) -> None:
         self._selected_feature = feature
@@ -458,7 +475,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
     def _body_selector_changed(self, index: int) -> None:
         if self._refreshing_selector or index < 0:
             return
-        self._restore_prehistory_visibility_if_needed()
+        self._restore_scrub_visibility_if_needed()
         body_name = self._body_selector.itemData(index)
         body = self._body_by_name.get(body_name)
         if body is None:
@@ -558,15 +575,16 @@ class TipTrackDock(QtWidgets.QDockWidget):
     def _sync_scrubber_to_tip(self) -> None:
         features = self.strip.visible_features()
         tip = safe_getattr(self._body, "Tip", None)
-        if tip is None:
-            tip_position = 0
-        else:
+        n = len(features)
+        if tip is not None:
             try:
                 tip_position = features.index(tip) + 1
             except ValueError:
                 tip_position = 0
-        if tip_position > 0:
-            self._restore_prehistory_visibility_if_needed()
+            if tip_position > 0:
+                self._restore_scrub_visibility_if_needed()
+        else:
+            tip_position = max(0, min(self._scrubber.value(), n)) if n else 0
         self._set_scrubber_value(tip_position)
 
     def _set_scrubber_value(self, value: int) -> None:

@@ -11,6 +11,8 @@
   index helpers still map as ``position = feature_index + 1``. Playback begins
   at pre-history and advances through full history. Pre-history visibility is
   applied after the tip clear and document recompute so the 3D view stays hidden.
+  Sketch-only slider positions (no PartDesign tip yet) hide the Body and show
+  only the active timeline feature (e.g. the sketch wireframe).
 
 ## 0.1.0 - 2026-05-09
 
