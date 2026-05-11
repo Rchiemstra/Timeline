@@ -45,57 +45,100 @@ def _qobject_alive(obj: QtCore.QObject | None) -> bool:
     return True
 
 
-def _view_menu(main_window):
-    """Return FreeCAD's View menu when it can be found."""
+def _view_menu_entry(main_window):
+    """Return (View QAction, QMenu) when both wrappers are still alive."""
     menu_bar = main_window.menuBar()
     if not _qobject_alive(menu_bar):
-        return None
-    for action in menu_bar.actions():
-        if not _qobject_alive(action):
+        return None, None
+    for menu_action in menu_bar.actions():
+        if not _qobject_alive(menu_action):
             continue
         try:
-            label = action.text().replace("&", "").strip()
+            label = menu_action.text().replace("&", "").strip()
         except RuntimeError:
             continue
         if label not in _VIEW_MENU_LABELS:
             continue
-        menu = action.menu()
+        menu = menu_action.menu()
         if menu is not None and _qobject_alive(menu) and isinstance(menu, QtWidgets.QMenu):
-            return menu
-    return None
+            return menu_action, menu
+    return None, None
 
 
-def _try_attach_view_menu_toggle(main_window, dock: TipTrackDock, retry_index: int = 0) -> None:
-    """Add the dock visibility toggle to the View menu; retry if menus are not ready yet."""
-    if getattr(dock, "_tiptrack_view_menu_attached", False):
-        return
-
-    action = dock.toggleViewAction()
-    action.setText("TipTrack timeline")
-    view_menu = _view_menu(main_window)
-
-    if view_menu is not None:
-        try:
-            view_menu.addAction(action)
-            dock._tiptrack_view_menu_attached = True
-            return
-        except RuntimeError as exc:
-            last_error = exc
-    else:
-        last_error = None
-
+def _schedule_view_menu_retry(dock: TipTrackDock, retry_index: int) -> None:
+    """Queue another attachment attempt after a short delay."""
     if retry_index >= len(_VIEW_MENU_RETRY_MS):
-        detail = last_error if last_error is not None else "View menu not found"
-        App.Console.PrintWarning(
-            f"TipTrack: failed to add View menu action after retries: {detail}\n"
-        )
         return
-
     delay = _VIEW_MENU_RETRY_MS[retry_index]
     QtCore.QTimer.singleShot(
         delay,
-        lambda: _try_attach_view_menu_toggle(main_window, dock, retry_index + 1),
+        lambda d=dock, ri=retry_index + 1: _try_attach_view_menu_toggle(d, ri),
     )
+
+
+def _schedule_view_menu_reattach(dock: TipTrackDock) -> None:
+    """Defer reattach so a workbench switch can finish rebuilding menus first."""
+    delay = _VIEW_MENU_RETRY_MS[0]
+    QtCore.QTimer.singleShot(delay, lambda d=dock: _try_attach_view_menu_toggle(d, 0))
+
+
+def _install_workbench_reattach_hook(main_window, dock: TipTrackDock) -> None:
+    """Re-run View menu attachment after workbench changes may rebuild menus."""
+    if getattr(dock, "_tiptrack_wb_hook_installed", False):
+        return
+    wb_sig = getattr(main_window, "workbenchActivated", None)
+    if wb_sig is None:
+        return
+    try:
+        wb_sig.connect(lambda *_: _schedule_view_menu_reattach(dock))
+        dock._tiptrack_wb_hook_installed = True
+    except (TypeError, RuntimeError):
+        pass
+
+
+def _try_attach_view_menu_toggle(dock: TipTrackDock, retry_index: int = 0) -> None:
+    """Add the dock visibility toggle to the View menu; retry if menus are not ready yet."""
+    if not _qobject_alive(dock):
+        return
+
+    main_window = Gui.getMainWindow()
+    if main_window is None or not _qobject_alive(main_window):
+        _schedule_view_menu_retry(dock, retry_index)
+        return
+
+    menu_bar = main_window.menuBar()
+    if menu_bar is None or not _qobject_alive(menu_bar):
+        _schedule_view_menu_retry(dock, retry_index)
+        return
+
+    try:
+        action = dock.toggleViewAction()
+    except RuntimeError:
+        action = None
+    if action is None or not _qobject_alive(action):
+        _schedule_view_menu_retry(dock, retry_index)
+        return
+
+    action.setText("TipTrack timeline")
+
+    view_menu_action, view_menu = _view_menu_entry(main_window)
+    if (
+        view_menu_action is None
+        or view_menu is None
+        or not _qobject_alive(view_menu_action)
+        or not _qobject_alive(view_menu)
+    ):
+        _schedule_view_menu_retry(dock, retry_index)
+        return
+
+    try:
+        if action in view_menu.actions():
+            dock._tiptrack_view_menu_attached = True
+            return
+        view_menu.addAction(action)
+        dock._tiptrack_view_menu_attached = True
+    except RuntimeError:
+        _schedule_view_menu_retry(dock, retry_index)
 
 
 def _install() -> None:
@@ -121,7 +164,8 @@ def _install() -> None:
         dock.setObjectName(_DOCK_OBJECT_NAME)
         main_window.addDockWidget(QtCore.Qt.BottomDockWidgetArea, dock)
 
-        _try_attach_view_menu_toggle(main_window, dock)
+        _install_workbench_reattach_hook(main_window, dock)
+        _try_attach_view_menu_toggle(dock)
 
         dock.setVisible(get_visible_on_startup())
 
