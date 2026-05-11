@@ -184,6 +184,68 @@ def test_visibility_capture_hide_restore_preserves_values(mock_freecad):
     assert vo_p.Visibility is True
 
 
+def test_apply_scrub_visibility_matches_five_frame_demo_states(mock_freecad):
+    """Scrub visibility reveals only the geometry for the active timeline state."""
+    vo_body = SimpleNamespace(Visibility=True)
+    vo_square = SimpleNamespace(Visibility=True)
+    vo_cube = SimpleNamespace(Visibility=True)
+    vo_hole_sketch = SimpleNamespace(Visibility=True)
+    vo_hole_pocket = SimpleNamespace(Visibility=True)
+    square = SimpleNamespace(Name="SquareSketch", ViewObject=vo_square)
+    cube = SimpleNamespace(Name="CubePad", ViewObject=vo_cube)
+    hole_sketch = SimpleNamespace(Name="HoleSketch", ViewObject=vo_hole_sketch)
+    hole_pocket = SimpleNamespace(Name="HolePocket", ViewObject=vo_hole_pocket)
+    body = SimpleNamespace(
+        Name="Body",
+        Group=[square, cube, hole_sketch, hole_pocket],
+        ViewObject=vo_body,
+    )
+
+    from freecad.TipTrack.tip_controller import (
+        apply_scrub_visibility,
+        capture_body_group_visibility,
+    )
+
+    cap = capture_body_group_visibility(body)
+
+    apply_scrub_visibility(cap, body, 0, None, None)
+    assert [vo_body.Visibility, vo_square.Visibility, vo_cube.Visibility] == [
+        False,
+        False,
+        False,
+    ]
+    assert vo_hole_sketch.Visibility is False
+    assert vo_hole_pocket.Visibility is False
+
+    apply_scrub_visibility(cap, body, 1, square, None)
+    assert vo_body.Visibility is True
+    assert vo_square.Visibility is True
+    assert vo_cube.Visibility is False
+    assert vo_hole_sketch.Visibility is False
+    assert vo_hole_pocket.Visibility is False
+
+    apply_scrub_visibility(cap, body, 2, cube, cube)
+    assert vo_body.Visibility is True
+    assert vo_square.Visibility is False
+    assert vo_cube.Visibility is True
+    assert vo_hole_sketch.Visibility is False
+    assert vo_hole_pocket.Visibility is False
+
+    apply_scrub_visibility(cap, body, 3, hole_sketch, cube)
+    assert vo_body.Visibility is True
+    assert vo_square.Visibility is False
+    assert vo_cube.Visibility is True
+    assert vo_hole_sketch.Visibility is True
+    assert vo_hole_pocket.Visibility is False
+
+    apply_scrub_visibility(cap, body, 4, hole_pocket, hole_pocket)
+    assert vo_body.Visibility is True
+    assert vo_square.Visibility is False
+    assert vo_cube.Visibility is False
+    assert vo_hole_sketch.Visibility is False
+    assert vo_hole_pocket.Visibility is True
+
+
 def test_scrub_tip_to_index_updates_tip_and_recomputes(mock_freecad):
     """The scrubber helper can clear the tip before the first solid feature."""
     document = _Document()

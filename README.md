@@ -108,7 +108,7 @@ exercise the TipTrack dock, and write screenshots + a summary JSON to
 
 | Test | Script | What it covers |
 |---|---|---|
-| Scrubber smoke | `freecad_tiptrack_gui_smoke.py` | Playhead rollback, volume checks, 6-frame screenshots |
+| Scrubber smoke | `freecad_tiptrack_gui_smoke.py` | Playhead rollback, volume checks, 5-frame screenshots |
 | Reorder smoke | `freecad_tiptrack_reorder_smoke.py` | Valid reorder, 3 rejected moves, scrub after reorder |
 
 On Windows, run both tests with the helper script:

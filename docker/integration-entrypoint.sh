@@ -18,9 +18,8 @@ tiptrack_encode_integration_media() {
     "${AD}/freecad_tiptrack_frame_00_initial.png"
     "${AD}/freecad_tiptrack_frame_01_scrub_sketch.png"
     "${AD}/freecad_tiptrack_frame_02_scrub_pad.png"
-    "${AD}/freecad_tiptrack_frame_03_two_pads_no_hole.png"
+    "${AD}/freecad_tiptrack_frame_03_hole_sketch_on_cube.png"
     "${AD}/freecad_tiptrack_frame_04_full_with_hole.png"
-    "${AD}/freecad_tiptrack_frame_05_playback_done.png"
   )
   local i
 

@@ -17,12 +17,11 @@ from freecad.TipTrack.i18n import translate
 from freecad.TipTrack.Qt.Gui import QtCore, QtGui, QtWidgets
 from freecad.TipTrack.strip import TimelineStrip
 from freecad.TipTrack.tip_controller import (
+    apply_scrub_visibility,
     capture_body_group_visibility,
-    hide_captured_viewobjects,
     restore_captured_visibility,
     scrub_tip_to_position,
     set_tip,
-    set_viewobject_visibility,
     toggle_suppression,
 )
 
@@ -39,6 +38,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._refreshing_selector = False
         self._updating_navigation = False
         self._refresh_depth = 0
+        self._scrub_depth = 0
         self._scrub_visibility_capture: list = []
         self._scrub_visibility_capture_body = None
 
@@ -187,6 +187,8 @@ class TipTrackDock(QtWidgets.QDockWidget):
 
     def refresh(self) -> None:
         """Refresh the displayed Body and feature strip."""
+        if self._scrub_depth:
+            return
         if self._refresh_depth:
             return
         self._refresh_depth += 1
@@ -248,15 +250,12 @@ class TipTrackDock(QtWidgets.QDockWidget):
         pos = max(0, min(int(position), n))
 
         try:
+            self._scrub_depth += 1
+            self._ensure_scrub_visibility_capture()
             tip_target = scrub_tip_to_position(self._body, pos)
             head = features[pos - 1] if pos > 0 else None
-            non_solid = pos == 0 or tip_target is None
-
-            if non_solid:
-                self._ensure_scrub_visibility_capture()
-                self._apply_non_solid_scrub_visibility(pos, head)
-            else:
-                self._restore_scrub_visibility_if_needed()
+            self._apply_scrub_visibility(pos, head, tip_target)
+            self._scrub_depth -= 1
 
             self.strip.set_body(self._body, scrub_position=pos)
             if pos == 0:
@@ -278,6 +277,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
             self._set_scrubber_value(pos)
             self._update_navigation_controls()
         except Exception as exc:
+            self._scrub_depth = max(0, self._scrub_depth - 1)
             self._restore_scrub_visibility_if_needed()
             self._show_error("Timeline scrubber", exc)
 
@@ -320,6 +320,7 @@ class TipTrackDock(QtWidgets.QDockWidget):
     def set_tip_to_feature(self, feature) -> None:
         """Set the current Body tip to feature."""
         try:
+            self._restore_scrub_visibility_if_needed()
             set_tip(self._body, feature)
             self.refresh()
         except Exception as exc:
@@ -405,13 +406,15 @@ class TipTrackDock(QtWidgets.QDockWidget):
         self._scrub_visibility_capture = capture_body_group_visibility(body)
         self._scrub_visibility_capture_body = body
 
-    def _apply_non_solid_scrub_visibility(self, pos: int, head_feature) -> None:
-        """Hide Body and all Group objects; at sketch-only positions show *head_feature* only."""
-        if not self._scrub_visibility_capture:
-            return
-        hide_captured_viewobjects(self._scrub_visibility_capture)
-        if pos > 0 and head_feature is not None:
-            set_viewobject_visibility(head_feature, True)
+    def _apply_scrub_visibility(self, pos: int, head_feature, tip_target) -> None:
+        """Apply viewport visibility for the current timeline scrub position."""
+        apply_scrub_visibility(
+            self._scrub_visibility_capture,
+            self._body,
+            pos,
+            head_feature,
+            tip_target,
+        )
 
     def _set_selected_feature(self, feature) -> None:
         self._selected_feature = feature

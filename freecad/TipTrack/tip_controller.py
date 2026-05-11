@@ -113,6 +113,33 @@ def restore_captured_visibility(capture) -> None:
             vo.Visibility = vis
 
 
+def apply_scrub_visibility(capture, body, position: int, head_feature, tip_target) -> None:
+    """Show the viewport state that matches a scrubber position.
+
+    Scrub mode hides every captured Body/group object first, then reveals only
+    the objects needed for the active rollback state. This keeps future sketches
+    from leaking into earlier solid states while still allowing the current
+    sketch to be previewed on top of the previous solid.
+    """
+    if not capture:
+        return
+
+    hide_captured_viewobjects(capture)
+    pos = int(position)
+    if pos <= 0:
+        return
+
+    if tip_target is not None:
+        set_viewobject_visibility(body, True)
+        set_viewobject_visibility(tip_target, True)
+        if head_feature is not tip_target:
+            set_viewobject_visibility(head_feature, True)
+        return
+
+    set_viewobject_visibility(body, True)
+    set_viewobject_visibility(head_feature, True)
+
+
 def hide_body_and_all_group_features(body) -> None:
     """Set ``ViewObject.Visibility`` False on the Body and every object in ``Body.Group``."""
     if body is None:
